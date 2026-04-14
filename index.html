@@ -1,0 +1,1020 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TEI‑параллельный корпус</title>
+<style>
+  :root{
+    --bg:#0b1020; --text:#e5e7eb; --muted:#a7b0c0;
+    --border:rgba(255,255,255,.10);
+    --ok: rgba(34,197,94,.22); --bad: rgba(239,68,68,.20);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--text);
+    font-family:Verdana,Tahoma,Arial,sans-serif;
+    background: radial-gradient(1200px 700px at 20% 0%, #121a33 0%, var(--bg) 55%);
+  }
+  .topbar{
+    position:sticky; top:0; z-index:10;
+    display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    padding:10px 12px;
+    background: linear-gradient(90deg, rgba(139,92,246,.26), rgba(245,158,11,.14));
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .brand{display:flex; flex-direction:column; min-width:320px}
+  .brand .t{font-weight:700; font-size:14px}
+  .brand .s{font-size:11px; color:rgba(229,231,235,.75); margin-top:2px}
+
+  .btn{
+    border:1px solid rgba(255,255,255,.14);
+    background:#0b1226; color:var(--text);
+    border-radius:10px; padding:7px 10px;
+    font-size:12px; cursor:pointer;
+  }
+  .btn:disabled{opacity:.45; cursor:not-allowed}
+
+  select,input[type="number"],input[type="text"],input[type="file"]{
+    background:#0b1226; color:var(--text);
+    border:1px solid rgba(255,255,255,.14);
+    border-radius:10px; padding:7px 9px;
+    font-size:12px; outline:none;
+  }
+  input[type="text"]{width:260px; max-width:55vw}
+
+  .chip{
+    display:inline-block; padding:4px 8px; border-radius:999px;
+    background: rgba(30,41,59,.85);
+    border:1px solid rgba(255,255,255,.10);
+    color: rgba(229,231,235,.9);
+    font-size:11px;
+  }
+
+  .layout{
+    height: calc(100% - 72px);
+    display:grid; grid-template-columns: 1fr 380px;
+    gap:10px; padding:10px 12px 12px 12px;
+  }
+  .main, .side{
+    border:1px solid var(--border);
+    border-radius:14px;
+    background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+    overflow:hidden;
+    min-height:0;
+  }
+  .main{display:flex; flex-direction:column}
+  .mainHeader{
+    padding:10px 12px;
+    border-bottom:1px solid rgba(255,255,255,.10);
+    display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    background: rgba(0,0,0,.14);
+  }
+  .status{font-size:11px; color:rgba(229,231,235,.75)}
+
+  .tablewrap{flex:1; min-height:0; overflow:auto}
+  table{border-collapse:separate; border-spacing:0; width:100%; min-width:1100px}
+  thead th{
+    position:sticky; top:0; z-index:3;
+    background: rgba(15,23,42,.98);
+    border-bottom:1px solid rgba(255,255,255,.10);
+    padding:8px 10px; font-size:11px; text-align:left;
+  }
+  tbody td{
+    border-bottom:1px solid rgba(255,255,255,.08);
+    padding:8px 10px;
+    vertical-align:top;
+    font-size:14px; line-height:1.55;
+    white-space:pre-wrap; word-break:break-word;
+  }
+  tbody tr:nth-child(odd) td{background:rgba(13,21,48,.55)}
+  tbody tr:nth-child(even) td{background:rgba(12,20,43,.55)}
+  .col-id{width:210px; font-size:11px; color:rgba(229,231,235,.70)}
+
+  .tok{display:inline-block; padding:0 2px; border-radius:4px; margin:0 1px}
+  .tok.ok{background:var(--ok); outline:1px solid rgba(34,197,94,.18)}
+  .tok.bad{background:var(--bad); outline:1px solid rgba(239,68,68,.18)}
+
+  .badge{
+    display:inline-block;
+    margin-left:6px;
+    padding:1px 6px;
+    border-radius:999px;
+    font-size:10px;
+    border:1px solid rgba(255,255,255,.14);
+    background:rgba(0,0,0,.16);
+    color:rgba(229,231,235,.9);
+  }
+  .b-graph{border-color:rgba(139,92,246,.45)}
+  .b-phone{border-color:rgba(34,211,238,.35)}
+  .b-morph{border-color:rgba(34,197,94,.35)}
+  .b-syn{border-color:rgba(245,158,11,.45)}
+  .b-lex{border-color:rgba(239,68,68,.45)}
+
+  .side{overflow:auto; padding:10px}
+  .box{
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:12px;
+    padding:10px;
+    background: rgba(0,0,0,.16);
+    margin-bottom:10px;
+  }
+  .box h3{margin:0 0 8px 0; font-size:13px}
+  .hint{font-size:11px; color:rgba(229,231,235,.72); line-height:1.35}
+  .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .msCard{
+    border:1px solid rgba(255,255,255,.10);
+    border-radius:12px;
+    padding:10px;
+    background: rgba(0,0,0,.16);
+    margin-bottom:10px;
+  }
+  .msHead{display:flex; gap:8px; align-items:flex-start}
+  .msTitle{font-weight:700; font-size:12px; line-height:1.25}
+  .msMeta{margin-top:4px; font-size:11px; color:rgba(229,231,235,.68)}
+  .msRight{margin-left:auto; display:flex; gap:8px; align-items:center; font-size:11px; color:rgba(229,231,235,.85)}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px}
+  .ctl label{display:block; font-size:11px; color:rgba(229,231,235,.68); margin-bottom:4px}
+  .tiny{
+    width:30px; height:26px;
+    border-radius:9px;
+    border:1px solid rgba(255,255,255,.14);
+    background:#0b1226; color:var(--text);
+    cursor:pointer;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="t">TEI‑параллельный корпус</div>
+    <div class="s">Загрузка → master/листы → авто‑листы → авто‑сдвиг → разночтения</div>
+  </div>
+
+  <span class="chip">Файлы</span>
+  <input id="fileInput" type="file" multiple accept=".xml,.txt"/>
+
+  <span class="chip">Master</span>
+  <select id="masterSelect" disabled></select>
+
+  <span class="chip">Листы</span>
+  <select id="sheetFrom" disabled></select>
+  <select id="sheetTo" disabled></select>
+
+  <span class="chip">Слов/сегм</span>
+  <input id="segWords" type="number" min="6" max="30" value="12" disabled style="width:86px"/>
+
+  <button id="btnAutoSheets" class="btn" disabled>Авто‑листы</button>
+  <button id="btnAutoShift" class="btn" disabled>Авто‑сдвиг</button>
+
+  <div style="flex:1"></div>
+  <input id="searchBox" type="text" placeholder="Поиск по master…" disabled/>
+</div>
+
+<div class="layout">
+  <section class="main">
+    <div class="mainHeader">
+      <b>Параллельный просмотр</b>
+      <span class="chip" id="chipInfo">сегментов: 0</span>
+      <span class="status" id="statusLine">Выбери TEI файлы.</span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="box">
+      <h3>Подсветка</h3>
+      <label class="hint"><input id="chkHighlight" type="checkbox" checked/> зелёное/красное относительно master</label>
+    </div>
+
+    <div class="box">
+      <h3>Определение типа разночтений</h3>
+      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной.</div>
+      <div style="height:8px"></div>
+
+      <div class="row">
+        <label class="hint"><input class="typeChk" type="checkbox" value="graphic" checked/> графические</label>
+        <label class="hint"><input class="typeChk" type="checkbox" value="phonetic" checked/> фонетические</label>
+        <label class="hint"><input class="typeChk" type="checkbox" value="morph" checked/> морфологические</label>
+        <label class="hint"><input class="typeChk" type="checkbox" value="syntactic" checked/> синтаксические</label>
+        <label class="hint"><input class="typeChk" type="checkbox" value="lexical" checked/> лексические</label>
+      </div>
+
+      <div style="height:8px"></div>
+      <div class="row">
+        <span class="hint">Показывать:</span>
+        <select id="rowFilterMode">
+          <option value="all">все сегменты</option>
+          <option value="onlyVariants">только с выбранными типами</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="msList"></div>
+
+    <div class="box">
+      <div class="hint">Порядок работы: загрузить файлы → Авто‑листы → Авто‑сдвиг → при необходимости поправить ▲▼.</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function(){
+  var TEI_NS = "http://www.tei-c.org/ns/1.0";
+
+  var manuscripts = [];
+  var masterId = null;
+
+  var typeEnabled = {graphic:true, phonetic:true, morph:true, syntactic:true, lexical:true};
+
+  // UI
+  var fileInput = document.getElementById("fileInput");
+  var masterSelect = document.getElementById("masterSelect");
+  var sheetFrom = document.getElementById("sheetFrom");
+  var sheetTo = document.getElementById("sheetTo");
+  var segWords = document.getElementById("segWords");
+  var btnAutoSheets = document.getElementById("btnAutoSheets");
+  var btnAutoShift = document.getElementById("btnAutoShift");
+  var searchBox = document.getElementById("searchBox");
+
+  var chkHighlight = document.getElementById("chkHighlight");
+  var rowFilterMode = document.getElementById("rowFilterMode");
+  var typeChks = document.getElementsByClassName("typeChk");
+
+  var thead = document.getElementById("thead");
+  var tbody = document.getElementById("tbody");
+  var msList = document.getElementById("msList");
+  var chipInfo = document.getElementById("chipInfo");
+  var statusLine = document.getElementById("statusLine");
+
+  function setEnabled(on){
+    masterSelect.disabled = !on;
+    sheetFrom.disabled = !on;
+    sheetTo.disabled = !on;
+    segWords.disabled = !on;
+    btnAutoSheets.disabled = !on;
+    btnAutoShift.disabled = !on;
+    searchBox.disabled = !on;
+  }
+  setEnabled(false);
+
+  function uid(){
+    return "ms_" + Math.random().toString(16).slice(2) + "_" + Date.now().toString(16);
+  }
+
+  function decodeBuffer(buffer){
+    var bytes = new Uint8Array(buffer);
+
+    if(bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE){
+      return new TextDecoder("utf-16le").decode(buffer);
+    }
+    if(bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF){
+      var swapped = new Uint8Array(bytes.length);
+      for(var i=0;i+1<bytes.length;i+=2){ swapped[i]=bytes[i+1]; swapped[i+1]=bytes[i]; }
+      return new TextDecoder("utf-16le").decode(swapped);
+    }
+    var zeroOdd = 0;
+    for(var j=1;j<Math.min(400,bytes.length);j+=2){ if(bytes[j]===0) zeroOdd++; }
+    if(zeroOdd > 10) return new TextDecoder("utf-16le").decode(buffer);
+
+    return new TextDecoder("utf-8").decode(buffer);
+  }
+
+  function titleFromTei(doc){
+    var titles = doc.getElementsByTagNameNS(TEI_NS, "title");
+    if(!titles || !titles.length) return "Без названия";
+
+    var shortT = null, mainT = null;
+    for(var i=0;i<titles.length;i++){
+      var t = titles[i];
+      var type = t.getAttribute("type") || "";
+      if(type === "short") shortT = t.textContent;
+      if(type === "main") mainT = t.textContent;
+    }
+    return (shortT || mainT || titles[0].textContent || "Без названия").trim();
+  }
+
+  function guessAnchor(title){
+    var t = (title||"").toLowerCase();
+
+    if(t.indexOf("остромир")>=0) return 117;
+    if(t.indexOf("типограф")>=0) return 119;
+    if(t.indexOf("погодин")>=0) return 121;
+    if(t.indexOf("архангел")>=0) return 72;
+    if(t.indexOf("пантелей")>=0) return 140;
+
+    if(t.indexOf("eo")>=0 || t.indexOf("ео")>=0) return 117;
+    if(t.indexOf("et")>=0 || t.indexOf("ет")>=0) return 119;
+    if(t.indexOf("ea")>=0 || t.indexOf("еа")>=0) return 72;
+    if(t.indexOf("epog")>=0 || t.indexOf("епог")>=0) return 121;
+    if(t.indexOf("epant")>=0 || t.indexOf("епант")>=0) return 140;
+    if(t.indexOf("ep")>=0 || t.indexOf("еп")>=0) return 140;
+
+    return null;
+  }
+
+  function wordText(wNode){
+    var out = "";
+    var ch = wNode.childNodes;
+    for(var i=0;i<ch.length;i++){
+      var n = ch[i];
+      if(n.nodeType === 3){
+        var s = (n.textContent || "").replace(/\s+/g, " ").trim();
+        if(s) out += s;
+      } else if(n.nodeType === 1){
+        var ln = (n.localName || n.nodeName || "").toLowerCase();
+        if(ln === "fs" || ln === "lb") continue;
+      }
+    }
+    return out.trim();
+  }
+
+  function parseTei(xmlText){
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(xmlText, "application/xml");
+    if(doc.getElementsByTagName("parsererror").length){
+      throw new Error("XML parse error");
+    }
+
+    var title = titleFromTei(doc);
+    var sheets = {};
+    var curSheet = null;
+
+    function ensureSheet(n){
+      if(!sheets[n]) sheets[n] = {tokens:[]};
+    }
+    function addTok(t,v,l){
+      if(curSheet === null) return;
+      ensureSheet(curSheet);
+      sheets[curSheet].tokens.push({t:t, v:v, l:l||""});
+    }
+
+    var body = doc.getElementsByTagNameNS(TEI_NS, "body")[0] || doc.getElementsByTagName("body")[0];
+    if(!body) return {title:title, sheets:{}};
+
+    var ab = body.getElementsByTagNameNS(TEI_NS, "ab")[0] || body;
+
+    function walk(node){
+      if(!node) return;
+
+      if(node.nodeType === 1){
+        var ln = (node.localName || node.nodeName || "").toLowerCase();
+
+        if(ln === "milestone" && node.getAttribute("unit") === "sheet"){
+          curSheet = node.getAttribute("n");
+          ensureSheet(curSheet);
+          return;
+        }
+
+        if(ln === "w"){
+          var w = wordText(node);
+          var lemma = (node.getAttribute("lemma") || "").trim();
+          if(w) addTok("w", w, lemma);
+          return;
+        }
+
+        if(ln === "pc"){
+          if(node.getAttribute("type") !== "space"){
+            var p = (node.textContent || "").trim();
+            if(p) addTok("p", p, "");
+          }
+          return;
+        }
+
+        if(ln === "lb" || ln === "cb"){
+          addTok("nl", "\n", "");
+          return;
+        }
+
+        if(ln === "pb" || ln === "fs"){
+          return;
+        }
+
+        for(var i=0;i<node.childNodes.length;i++){
+          walk(node.childNodes[i]);
+        }
+      }
+    }
+
+    walk(ab);
+    return {title:title, sheets:sheets};
+  }
+
+  function normGraphic(s){
+    s = (s||"").toLowerCase();
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+  }
+
+  function normPhon(s){
+    var r = normGraphic(s);
+    r = r.replace(/ѣ/g,"е").replace(/ѧ/g,"я").replace(/ѫ/g,"у").replace(/ѩ/g,"я").replace(/ѭ/g,"ю")
+         .replace(/ѥ/g,"е").replace(/ꙗ/g,"я").replace(/ꙋ/g,"у").replace(/ѡ/g,"о").replace(/і/g,"и")
+         .replace(/ѳ/g,"ф").replace(/ѵ/g,"и");
+    return r;
+  }
+
+  function wordsFrom(text){
+    text = normPhon(text);
+    var re = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+/g;
+    return text.match(re) || [];
+  }
+
+  function setFromWords(ws){
+    var set = {};
+    for(var i=0;i<ws.length;i++){
+      var w = ws[i];
+      if(w.length < 2) continue;
+      set[w] = 1;
+    }
+    return set;
+  }
+
+  function setEquals(a,b){
+    var ka = 0, kb = 0;
+    for(var k in a){ if(a.hasOwnProperty(k)) ka++; }
+    for(var j in b){ if(b.hasOwnProperty(j)) kb++; }
+    if(ka !== kb) return false;
+    for(var x in a){ if(a.hasOwnProperty(x) && !b[x]) return false; }
+    return true;
+  }
+
+  function jaccard(a,b){
+    var inter = 0, uni = 0;
+    for(var k in a){ if(a.hasOwnProperty(k)){ uni++; if(b[k]) inter++; } }
+    for(var j in b){ if(b.hasOwnProperty(j) && !a[j]) uni++; }
+    return uni ? (inter/uni) : 0;
+  }
+
+  function buildSegments(tokens, wordsPerSeg){
+    var segs = [];
+    var buf = "";
+    var wc = 0;
+    var lemmas = [];
+
+    function addSpaceIfNeeded(){
+      if(!buf) return;
+      if(!/\s$/.test(buf)) buf += " ";
+    }
+    function addPunct(p){
+      buf = buf.replace(/[ \t]+$/g, "");
+      buf += p;
+    }
+    function flush(){
+      var t = (buf||"").replace(/[ \t]+$/g, "");
+      if(t.replace(/\s+/g,"").length > 0){
+        var wset = setFromWords(wordsFrom(t));
+        var lset = setFromWords(wordsFrom(lemmas.join(" ")));
+        segs.push({txt:t, wset:wset, lset:lset});
+      }
+      buf = "";
+      wc = 0;
+      lemmas = [];
+    }
+
+    for(var i=0;i<tokens.length;i++){
+      var tok = tokens[i];
+      if(tok.t === "nl"){
+        buf += "\n";
+      } else if(tok.t === "p"){
+        addPunct(tok.v);
+      } else if(tok.t === "w"){
+        addSpaceIfNeeded();
+        buf += tok.v;
+        wc++;
+        // для морфологии используем lemma, если нет — используем саму форму
+        lemmas.push(tok.l ? tok.l : tok.v);
+        if(wc >= wordsPerSeg) flush();
+      }
+    }
+    flush();
+    return segs;
+  }
+
+  function sheetNums(ms){
+    var arr = [];
+    for(var k in ms.sheets) if(ms.sheets.hasOwnProperty(k)) arr.push(k);
+    arr.sort(function(a,b){ return parseFloat(a)-parseFloat(b); });
+    return arr;
+  }
+
+  function getMaster(){
+    for(var i=0;i<manuscripts.length;i++) if(manuscripts[i].id === masterId) return manuscripts[i];
+    return null;
+  }
+
+  function segsForRange(ms, fromS, toS, wordsPerSeg){
+    var key = fromS + "|" + toS + "|" + wordsPerSeg;
+    if(ms._cache && ms._cache.key === key) return ms._cache.segs;
+
+    var nums = sheetNums(ms);
+    var from = parseFloat(fromS), to = parseFloat(toS);
+
+    var toks = [];
+    for(var i=0;i<nums.length;i++){
+      var n = parseFloat(nums[i]);
+      if(n < from || n > to) continue;
+      var t = ms.sheets[nums[i]].tokens || [];
+      for(var j=0;j<t.length;j++) toks.push(t[j]);
+    }
+
+    var segs = buildSegments(toks, wordsPerSeg);
+    ms._cache = {key:key, segs:segs};
+    return segs;
+  }
+
+  function getTypes(masterSeg, otherSeg){
+    var types = [];
+    if(!otherSeg || !otherSeg.txt) return types;
+    if(masterSeg.txt === otherSeg.txt) return types;
+
+    var g1 = normGraphic(masterSeg.txt);
+    var g2 = normGraphic(otherSeg.txt);
+    if(g1 === g2){ types.push("graphic"); return types; }
+
+    var p1 = normPhon(masterSeg.txt);
+    var p2 = normPhon(otherSeg.txt);
+    if(p1 === p2){ types.push("phonetic"); return types; }
+
+    // морфология (по леммам)
+    if(masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+      types.push("morph");
+      return types;
+    }
+
+    // синтаксис (очень грубо): много общих слов, но не совпадает
+    var sim = jaccard(masterSeg.wset||{}, otherSeg.wset||{});
+    if(sim >= 0.75){
+      types.push("syntactic");
+      return types;
+    }
+
+    types.push("lexical");
+    return types;
+  }
+
+  function typeBadge(type){
+    if(type === "graphic") return {txt:"граф", cls:"b-graph"};
+    if(type === "phonetic") return {txt:"фон", cls:"b-phone"};
+    if(type === "morph") return {txt:"морф", cls:"b-morph"};
+    if(type === "syntactic") return {txt:"синт", cls:"b-syn"};
+    return {txt:"лекс", cls:"b-lex"};
+  }
+
+  function highlightHTML(masterSeg, otherSeg){
+    var masterSet = masterSeg.wset || {};
+    var text = otherSeg.txt || "";
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [];
+    var m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      if(!isWord){
+        out.push(part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
+      } else {
+        var key = normPhon(part);
+        var cls = masterSet[key] ? "ok" : "bad";
+        var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        out.push('<span class="tok '+cls+'">'+esc+'</span>');
+      }
+    }
+    return out.join("");
+  }
+
+  function rebuildMasterSelect(){
+    masterSelect.innerHTML = "";
+    for(var i=0;i<manuscripts.length;i++){
+      var opt = document.createElement("option");
+      opt.value = manuscripts[i].id;
+      opt.textContent = manuscripts[i].title;
+      masterSelect.appendChild(opt);
+    }
+    masterSelect.value = masterId;
+  }
+
+  function rebuildSheets(){
+    var master = getMaster();
+    sheetFrom.innerHTML = "";
+    sheetTo.innerHTML = "";
+    if(!master) return;
+
+    var nums = sheetNums(master);
+    for(var i=0;i<nums.length;i++){
+      var o1 = document.createElement("option"); o1.value = nums[i]; o1.textContent = nums[i];
+      var o2 = document.createElement("option"); o2.value = nums[i]; o2.textContent = nums[i];
+      sheetFrom.appendChild(o1);
+      sheetTo.appendChild(o2);
+    }
+    if(nums.length){
+      sheetFrom.value = nums[0];
+      sheetTo.value = nums[nums.length-1];
+    }
+  }
+
+  function rebuildMsList(){
+    msList.innerHTML = "";
+
+    for(var i=0;i<manuscripts.length;i++){
+      (function(ms){
+        var card = document.createElement("div");
+        card.className = "msCard";
+
+        var head = document.createElement("div");
+        head.className = "msHead";
+
+        var left = document.createElement("div");
+        var t = document.createElement("div");
+        t.className = "msTitle";
+        t.textContent = ms.title;
+        var meta = document.createElement("div");
+        meta.className = "msMeta";
+        var nums = sheetNums(ms);
+        meta.textContent = "листы: " + (nums[0]||"?") + "… " + (nums[nums.length-1]||"?");
+        left.appendChild(t);
+        left.appendChild(meta);
+
+        var right = document.createElement("div");
+        right.className = "msRight";
+
+        var showLbl = document.createElement("label");
+        var show = document.createElement("input");
+        show.type = "checkbox";
+        show.checked = ms.visible;
+        show.addEventListener("change", function(){ ms.visible = !!show.checked; render(); });
+        showLbl.appendChild(show); showLbl.appendChild(document.createTextNode("показ"));
+        right.appendChild(showLbl);
+
+        var mLbl = document.createElement("label");
+        var m = document.createElement("input");
+        m.type = "radio"; m.name = "masterRadio";
+        m.checked = (ms.id === masterId);
+        m.addEventListener("change", function(){
+          masterId = ms.id;
+          rebuildMasterSelect();
+          rebuildSheets();
+          for(var k=0;k<manuscripts.length;k++) manuscripts[k]._cache = null;
+          render();
+        });
+        mLbl.appendChild(m); mLbl.appendChild(document.createTextNode("master"));
+        right.appendChild(mLbl);
+
+        head.appendChild(left);
+        head.appendChild(right);
+
+        var grid = document.createElement("div");
+        grid.className = "grid2";
+
+        var c1 = document.createElement("div");
+        c1.className = "ctl";
+        var l1 = document.createElement("label");
+        l1.textContent = "Смещение листов (к master)";
+        var so = document.createElement("input");
+        so.type = "number";
+        so.value = ms.sheetOffset || 0;
+        so.addEventListener("input", function(){
+          ms.sheetOffset = parseFloat(so.value||"0");
+          ms._cache = null;
+          render();
+        });
+        c1.appendChild(l1); c1.appendChild(so);
+
+        var c2 = document.createElement("div");
+        c2.className = "ctl";
+        var l2 = document.createElement("label");
+        l2.textContent = "Сдвиг сегментов (ручной)";
+        var row = document.createElement("div");
+        row.className = "row";
+        var ss = document.createElement("input");
+        ss.type = "number";
+        ss.value = ms.segShift || 0;
+        ss.style.width = "90px";
+        ss.addEventListener("input", function(){
+          ms.segShift = parseInt(ss.value||"0",10) || 0;
+          render();
+        });
+        var up = document.createElement("button");
+        up.className = "tiny"; up.textContent = "▲";
+        up.addEventListener("click", function(){
+          ms.segShift = (ms.segShift||0) - 1;
+          ss.value = ms.segShift;
+          render();
+        });
+        var dn = document.createElement("button");
+        dn.className = "tiny"; dn.textContent = "▼";
+        dn.addEventListener("click", function(){
+          ms.segShift = (ms.segShift||0) + 1;
+          ss.value = ms.segShift;
+          render();
+        });
+        row.appendChild(ss); row.appendChild(up); row.appendChild(dn);
+        c2.appendChild(l2); c2.appendChild(row);
+
+        grid.appendChild(c1);
+        grid.appendChild(c2);
+
+        card.appendChild(head);
+        card.appendChild(grid);
+        msList.appendChild(card);
+      })(manuscripts[i]);
+    }
+  }
+
+  function render(){
+    var master = getMaster();
+    if(!master) return;
+
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    if(parseFloat(fromM) > parseFloat(toM)){
+      var tmp = fromM; fromM = toM; toM = tmp;
+      sheetFrom.value = fromM; sheetTo.value = toM;
+    }
+
+    var wps = parseInt(segWords.value||"12",10) || 12;
+    if(wps < 6) wps = 6;
+    if(wps > 30) wps = 30;
+    segWords.value = wps;
+
+    var masterSegs = segsForRange(master, fromM, toM, wps);
+
+    var visible = manuscripts.filter(function(m){ return m.visible; });
+    visible.sort(function(a,b){
+      if(a.id===master.id) return -1;
+      if(b.id===master.id) return 1;
+      return a.title.localeCompare(b.title);
+    });
+
+    // other seg lists
+    var otherById = {};
+    for(var k=0;k<visible.length;k++){
+      var ms = visible[k];
+      if(ms.id === master.id) continue;
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+      otherById[ms.id] = segsForRange(ms, fromO, toO, wps);
+    }
+
+    // header
+    var trh = document.createElement("tr");
+    var th0 = document.createElement("th");
+    th0.textContent = "№ / сегмент";
+    trh.appendChild(th0);
+    for(var i=0;i<visible.length;i++){
+      var th = document.createElement("th");
+      th.textContent = visible[i].title + (visible[i].id===master.id ? " (master)" : "");
+      trh.appendChild(th);
+    }
+    thead.innerHTML = "";
+    thead.appendChild(trh);
+
+    var q = (searchBox.value||"").toLowerCase().trim();
+    var mode = rowFilterMode.value;
+
+    tbody.innerHTML = "";
+
+    var shown = 0;
+    for(var r=0;r<masterSegs.length;r++){
+      var mseg = masterSegs[r];
+      if(q && (mseg.txt||"").toLowerCase().indexOf(q) === -1) continue;
+
+      // вычисляем типы по всем рукописям (кроме master) для фильтра
+      var rowHasSelected = false;
+
+      for(var c0=0;c0<visible.length;c0++){
+        var ms0 = visible[c0];
+        if(ms0.id === master.id) continue;
+
+        var list0 = otherById[ms0.id] || [];
+        var idx0 = r + (ms0.segShift||0);
+        if(idx0 < 0) idx0 = 0;
+        if(idx0 >= list0.length) idx0 = list0.length - 1;
+        var oseg0 = list0.length ? list0[idx0] : null;
+
+        var types0 = getTypes(mseg, oseg0);
+        for(var tt=0; tt<types0.length; tt++){
+          if(typeEnabled[types0[tt]]) rowHasSelected = true;
+        }
+      }
+
+      if(mode === "onlyVariants" && !rowHasSelected) continue;
+
+      var tr = document.createElement("tr");
+      var tdId = document.createElement("td");
+      tdId.className = "col-id";
+      tdId.textContent = (r+1);
+      tr.appendChild(tdId);
+
+      for(var c=0;c<visible.length;c++){
+        var ms2 = visible[c];
+        var td = document.createElement("td");
+
+        if(ms2.id === master.id){
+          td.textContent = mseg.txt || "";
+        } else {
+          var list = otherById[ms2.id] || [];
+          var idx = r + (ms2.segShift||0);
+          if(idx < 0) idx = 0;
+          if(idx >= list.length) idx = list.length - 1;
+          var oseg = list.length ? list[idx] : {txt:"", wset:{}, lset:{}};
+
+          if(chkHighlight.checked){
+            td.innerHTML = highlightHTML(mseg, oseg);
+          } else {
+            td.textContent = oseg.txt || "";
+          }
+
+          var types = getTypes(mseg, oseg);
+          for(var t=0; t<types.length; t++){
+            var info = typeBadge(types[t]);
+            var b = document.createElement("span");
+            b.className = "badge " + info.cls;
+            b.textContent = info.txt;
+            td.appendChild(b);
+          }
+        }
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+      shown++;
+    }
+
+    chipInfo.textContent = "сегментов: " + masterSegs.length + " | показано: " + shown;
+    statusLine.textContent = "Master: " + master.title + " | листы " + fromM + "… " + toM + " | слов/сегм: " + wps;
+  }
+
+  function autoSheets(){
+    var master = getMaster();
+    if(!master) return;
+
+    if(master.anchor == null) master.anchor = guessAnchor(master.title);
+    if(master.anchor == null){
+      statusLine.textContent = "Авто‑листы: не смог узнать якорь master по названию.";
+      return;
+    }
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id){ ms.sheetOffset = 0; continue; }
+      if(ms.anchor == null) ms.anchor = guessAnchor(ms.title);
+      if(ms.anchor != null){
+        ms.sheetOffset = ms.anchor - master.anchor;
+        ms._cache = null;
+      }
+    }
+    rebuildMsList();
+    render();
+  }
+
+  function overlapScore(setA, setB){
+    var s = 0;
+    for(var k in setA){ if(setA.hasOwnProperty(k) && setB[k]) s++; }
+    return s;
+  }
+
+  function autoShift(){
+    var master = getMaster();
+    if(!master) return;
+
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = parseInt(segWords.value||"12",10) || 12;
+
+    var masterSegs = segsForRange(master, fromM, toM, wps);
+    var sampleN = Math.min(120, masterSegs.length);
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id) { ms.segShift = 0; continue; }
+
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+      var otherSegs = segsForRange(ms, fromO, toO, wps);
+
+      var bestShift = 0;
+      var bestScore = -1;
+
+      for(var sh=-60; sh<=60; sh++){
+        var sc = 0;
+        for(var r=0;r<sampleN;r++){
+          var j = r + sh;
+          if(j<0 || j>=otherSegs.length) continue;
+          sc += overlapScore(masterSegs[r].wset, otherSegs[j].wset);
+        }
+        if(sc > bestScore){
+          bestScore = sc;
+          bestShift = sh;
+        }
+      }
+
+      ms.segShift = bestShift;
+    }
+
+    rebuildMsList();
+    render();
+    statusLine.textContent = "Авто‑сдвиг выполнен. Если чуть мимо — поправь ▲▼.";
+  }
+
+  // events
+  chkHighlight.addEventListener("change", render);
+  searchBox.addEventListener("input", function(){
+    clearTimeout(searchBox._t);
+    searchBox._t = setTimeout(render, 120);
+  });
+  masterSelect.addEventListener("change", function(){
+    masterId = masterSelect.value;
+    rebuildSheets();
+    for(var i=0;i<manuscripts.length;i++) manuscripts[i]._cache = null;
+    render();
+  });
+  sheetFrom.addEventListener("change", function(){ for(var i=0;i<manuscripts.length;i++) manuscripts[i]._cache=null; render(); });
+  sheetTo.addEventListener("change", function(){ for(var i=0;i<manuscripts.length;i++) manuscripts[i]._cache=null; render(); });
+  segWords.addEventListener("change", function(){ for(var i=0;i<manuscripts.length;i++) manuscripts[i]._cache=null; render(); });
+
+  rowFilterMode.addEventListener("change", render);
+
+  for(var i=0;i<typeChks.length;i++){
+    (function(chk){
+      chk.addEventListener("change", function(){
+        typeEnabled[chk.value] = !!chk.checked;
+        render();
+      });
+    })(typeChks[i]);
+  }
+
+  btnAutoSheets.addEventListener("click", autoSheets);
+  btnAutoShift.addEventListener("click", autoShift);
+
+  // file loading
+  fileInput.addEventListener("change", function(e){
+    var files = Array.prototype.slice.call(e.target.files || []);
+    if(!files.length) return;
+
+    manuscripts = [];
+    masterId = null;
+    setEnabled(false);
+    statusLine.textContent = "Загрузка файлов...";
+
+    var loaded = 0, ok = 0, err = 0;
+
+    files.forEach(function(file){
+      var reader = new FileReader();
+      reader.readAsArrayBuffer(file);
+
+      reader.onload = function(ev){
+        try{
+          var xmlText = decodeBuffer(ev.target.result);
+          var parsed = parseTei(xmlText);
+
+          var ms = {
+            id: uid(),
+            title: parsed.title,
+            sheets: parsed.sheets,
+            visible: true,
+            sheetOffset: 0,
+            segShift: 0,
+            anchor: null,
+            _cache: null
+          };
+          ms.anchor = guessAnchor(ms.title);
+          manuscripts.push(ms);
+          ok++;
+        } catch(ex){
+          console.error(ex);
+          err++;
+        } finally {
+          loaded++;
+          if(loaded === files.length){
+            if(!manuscripts.length){
+              statusLine.textContent = "Не удалось загрузить TEI. Открой в Chrome/Firefox.";
+              return;
+            }
+            masterId = manuscripts[0].id;
+
+            rebuildMasterSelect();
+            rebuildSheets();
+            rebuildMsList();
+            setEnabled(true);
+
+            statusLine.textContent = "Загружено рукописей: " + ok + " (ошибок: " + err + "). Нажми «Авто‑листы», затем «Авто‑сдвиг».";
+            render();
+          }
+        }
+      };
+
+      reader.onerror = function(){
+        loaded++; err++;
+      };
+    });
+  });
+})();
+</script>
+</body>
+</html>
