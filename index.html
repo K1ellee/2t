@@ -3,9 +3,21 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>TEI‑параллельный корпус (WORD‑MODE)</title>
+<title>TEI‑параллельный корпус</title>
 <style>
-  :root{
+/* PONOMAR FONT PATCH */
+@font-face{
+  font-family: "PonomarUnicode";
+  src: url("fonts/PonomarUnicode.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+/* Применяем к основному тексту корпуса (таблица) */
+thead th, tbody td{
+  font-family: "PonomarUnicode", Verdana, Tahoma, Arial, sans-serif;
+}
+:root{
     --bg:#0b1020; --text:#e5e7eb; --muted:#a7b0c0;
     --border:rgba(255,255,255,.10);
     --ok: rgba(34,197,94,.22); --bad: rgba(239,68,68,.20);
@@ -143,6 +155,54 @@
     background:#0b1226; color:var(--text);
     cursor:pointer;
   }
+/* PATCH v8 BIG FONT */
+tbody td{
+  font-size: 18px !important;
+  line-height: 1.65 !important;
+}
+.badge{
+  font-size: 11px !important;
+}
+.col-id{
+  font-size: 12px !important;
+}
+/* PATCH v9 BIG FONT */
+tbody td{
+  font-size: 20px !important;
+  line-height: 1.70 !important;
+}
+thead th{
+  font-size: 12px !important;
+}
+.ctxHit{
+  font-weight:700;
+  text-decoration: underline;
+}
+.ctxMeta{
+  opacity:.8;
+  font-size:12px;
+  margin-bottom:6px;
+}
+/* CONTEXT FONT PATCH */
+#ctxBox, #ctxBox *{
+  font-family: "PonomarUnicode", Verdana, Tahoma, Arial, sans-serif;
+}
+.ctxHit{
+  font-weight:700;
+  text-decoration: underline;
+}
+.ctxMeta{
+  opacity:.8;
+  font-size:12px;
+  margin-bottom:6px;
+}
+/* CONTEXT BIG FONT PATCH */
+#ctxOut{
+  font-size: 20px !important;
+  line-height: 1.70 !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 </style>
 </head>
 <body>
@@ -196,7 +256,7 @@
 
     <div class="box">
       <h3>Определение типа разночтений</h3>
-      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной. Если бейджа нет — это точное совпадение слова.</div>
+      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной.</div>
       <div style="height:8px"></div>
 
       <div class="row">
@@ -217,7 +277,11 @@
       </div>
     </div>
 
-    <div id="msList"></div>
+    <div class="box" id="ctxBox">
+  <h3>Контекст</h3>
+<div id="ctxOut" style="margin-top:8px;"></div>
+</div>
+<div id="msList"></div>
 
     <div class="box">
       <div class="hint">Порядок работы: загрузить файлы → Авто‑листы → Авто‑сдвиг → при необходимости поправить ▲▼.</div>
@@ -253,12 +317,21 @@
   var msList = document.getElementById("msList");
   var chipInfo = document.getElementById("chipInfo");
   var statusLine = document.getElementById("statusLine");
+  // CONTEXT UI
+  var ctxOut  = document.getElementById("ctxOut");
+  var ctxHint = document.getElementById("ctxHint");
 
-  function setEnabled(on){
+  // сохраняем данные последнего render(), чтобы по клику строить контекст
+  var _lastRender = { masterSegs: [], otherById: {}, visible: [] };
+
+  function escHtml(s){
+    return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+function setEnabled(on){
     masterSelect.disabled = !on;
     sheetFrom.disabled = !on;
     sheetTo.disabled = !on;
-    segWords.disabled = true; segWords.value = 1;
+    segWords.disabled = !on;
     btnAutoSheets.disabled = !on;
     btnAutoShift.disabled = !on;
     searchBox.disabled = !on;
@@ -432,7 +505,7 @@
     var set = {};
     for(var i=0;i<ws.length;i++){
       var w = ws[i];
-      if(w.length < 1) continue;
+      if(w.length < 2) continue;
       set[w] = 1;
     }
     return set;
@@ -455,51 +528,46 @@
   }
 
   function buildSegments(tokens, wordsPerSeg){
-    // WORD MODE:
-    // один сегмент = одно слово <w> (plain) + хвостовая пунктуация/переносы в txt до следующего <w>.
-    // Сравнение ведём по plain (без пунктуации).
     var segs = [];
-    var cur = null;
+    var buf = "";
+    var wc = 0;
+    var lemmas = [];
 
+    function addSpaceIfNeeded(){
+      if(!buf) return;
+      if(!/\s$/.test(buf)) buf += " ";
+    }
+    function addPunct(p){
+      buf = buf.replace(/[ \t]+$/g, "");
+      buf += p;
+    }
     function flush(){
-      if(cur){
-        cur.wset = setFromWords(wordsFrom(cur.plain));
-        var ltxt = (cur.lemma || cur.plain || "");
-        cur.lset = setFromWords(wordsFrom(ltxt));
-        segs.push(cur);
-        cur = null;
+      var t = (buf||"").replace(/[ \t]+$/g, "");
+      if(t.replace(/\s+/g,"").length > 0){
+        var wset = setFromWords(wordsFrom(t));
+        var lset = setFromWords(wordsFrom(lemmas.join(" ")));
+        segs.push({txt:t, wset:wset, lset:lset});
       }
+      buf = "";
+      wc = 0;
+      lemmas = [];
     }
 
     for(var i=0;i<tokens.length;i++){
       var tok = tokens[i];
-
-      if(tok.t === "w"){
-        flush();
-        var w = (tok.v || "").trim();
-        if(!w) continue;
-
-        cur = {
-          txt: w,           // для отображения (может получить пунктуацию/переносы)
-          plain: w,         // для сравнения (только слово)
-          lemma: (tok.l || "").trim(),
-          wset: {},
-          lset: {}
-        };
-        continue;
-      }
-
-      // прицепляем пунктуацию и переносы строки к текущему слову (только для показа)
-      if(cur && tok.t === "p"){
-        cur.txt = (cur.txt || "").replace(/[ \t]+$/g, "") + (tok.v || "");
-        continue;
-      }
-      if(cur && tok.t === "nl"){
-        cur.txt += "\n";
-        continue;
+      if(tok.t === "nl"){
+        buf += "\n";
+      } else if(tok.t === "p"){
+        addPunct(tok.v);
+      } else if(tok.t === "w"){
+        addSpaceIfNeeded();
+        buf += tok.v;
+        wc++;
+        // для морфологии используем lemma, если нет — используем саму форму
+        lemmas.push(tok.l ? tok.l : tok.v);
+        if(wc >= wordsPerSeg) flush();
       }
     }
-
     flush();
     return segs;
   }
@@ -538,39 +606,22 @@
 
   function getTypes(masterSeg, otherSeg){
     var types = [];
-    if(!otherSeg) return types;
+    if(!otherSeg || !otherSeg.txt) return types;
+    if(masterSeg.txt === otherSeg.txt) return types;
 
-    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
-    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
-    if(!b) return types;
-
-    // точное совпадение слова -> без бейджей
-    if(a === b) return types;
-
-    var g1 = normGraphic(a);
-    var g2 = normGraphic(b);
+    var g1 = normGraphic(masterSeg.txt);
+    var g2 = normGraphic(otherSeg.txt);
     if(g1 === g2){ types.push("graphic"); return types; }
 
-    var p1 = normPhon(a);
-    var p2 = normPhon(b);
+    var p1 = normPhon(masterSeg.txt);
+    var p2 = normPhon(otherSeg.txt);
     if(p1 === p2){ types.push("phonetic"); return types; }
 
-    // морфология (по леммам): если леммы совпали, но формы разные
-    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+    // морфология (по леммам)
+    if(masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
       types.push("morph");
       return types;
     }
-
-    // синтаксис (в WORD MODE почти не срабатывает, оставлено для совместимости логики)
-    var sim = jaccard((masterSeg && masterSeg.wset) || {}, (otherSeg && otherSeg.wset) || {});
-    if(sim >= 0.75){
-      types.push("syntactic");
-      return types;
-    }
-
-    types.push("lexical");
-    return types;
-  }
 
     // синтаксис (очень грубо): много общих слов, но не совпадает
     var sim = jaccard(masterSeg.wset||{}, otherSeg.wset||{});
@@ -584,37 +635,25 @@
   }
 
   function typeBadge(type){
-    if(type === "graphic")  return {txt:"граф", cls:"b-graph", title:"Графические: различия в диакритике/оформлении (после снятия диакритики совпадает)."};
-    if(type === "phonetic") return {txt:"фон",  cls:"b-phone", title:"Фонетические/орфографические: после замен ѣ→е, ѳ→ф, і→и и т.п. совпадает."};
-    if(type === "morph")    return {txt:"морф", cls:"b-morph", title:"Морфологические: формы разные, но леммы (lemma) совпадают (или совпало после подстановки формы вместо lemma)."};
-    if(type === "syntactic")return {txt:"синт", cls:"b-syn",   title:"Синтаксические (эвристика): много общих слов при различии текста. В режиме «слово-к-слову» почти не используется."};
-    return                 {txt:"лекс", cls:"b-lex",  title:"Лексические: разные слова (не совпали ни по графике, ни по фонетике, ни по леммам)."};
+    if(type === "graphic") return {txt:"граф", cls:"b-graph"};
+    if(type === "phonetic") return {txt:"фон", cls:"b-phone"};
+    if(type === "morph") return {txt:"морф", cls:"b-morph"};
+    if(type === "syntactic") return {txt:"синт", cls:"b-syn"};
+    return {txt:"лекс", cls:"b-lex"};
   }
 
   function highlightHTML(masterSeg, otherSeg){
-    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
-    var types = getTypes(masterSeg, otherSeg);
-    var primary = (types && types.length) ? types[0] : "exact";
-
-    // что считаем "похожим" (зелёное)
-    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
-    var cls = ok ? "ok" : "bad";
-
+    var masterSet = masterSeg.wset || {};
+    var text = otherSeg.txt || "";
     var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
     var out = [];
     var m;
     while((m = re.exec(text)) !== null){
       var part = m[0];
       var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
-      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
       if(!isWord){
-        out.push(esc);
+        out.push(part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
       } else {
-        out.push('<span class="tok '+cls+'">'+esc+'</span>');
-      }
-    }
-    return out.join("");
-  } else {
         var key = normPhon(part);
         var cls = masterSet[key] ? "ok" : "bad";
         var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -772,7 +811,10 @@
       sheetFrom.value = fromM; sheetTo.value = toM;
     }
 
-    var wps = 1; segWords.value = 1;
+    var wps = parseInt(segWords.value||"12",10) || 12;
+    if(wps < 1) wps = 1;
+    if(wps > 1) wps = 1;
+    segWords.value = wps;
 
     var masterSegs = segsForRange(master, fromM, toM, wps);
 
@@ -788,11 +830,28 @@
     for(var k=0;k<visible.length;k++){
       var ms = visible[k];
       if(ms.id === master.id) continue;
+
       var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
       var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
-      otherById[ms.id] = segsForRange(ms, fromO, toO, wps);
-    }
 
+      var raw = segsForRange(ms, fromO, toO, wps);
+
+      // если есть DP-карта выравнивания, строим массив длиной masterSegs с null-пропусками
+      var key = masterId + "|" + fromM + "|" + toM + "|" + wps + "|" + ms.id + "|" + (ms.sheetOffset||0);
+      if(ms._alignKey === key && ms._alignMap && ms._alignMap.length){
+        var aligned = new Array(masterSegs.length);
+        for(var r2=0; r2<masterSegs.length; r2++){
+          var j2 = ms._alignMap[r2];
+          aligned[r2] = (j2==null) ? null : raw[j2];
+        }
+        otherById[ms.id] = aligned;
+      } else {
+        otherById[ms.id] = raw;
+      }
+    }    // CONTEXT: remember last render
+    _lastRender.masterSegs = masterSegs;
+    _lastRender.otherById = otherById;
+    _lastRender.visible = visible;
     // header
     var trh = document.createElement("tr");
     var th0 = document.createElement("th");
@@ -824,10 +883,7 @@
         if(ms0.id === master.id) continue;
 
         var list0 = otherById[ms0.id] || [];
-        var idx0 = r + (ms0.segShift||0);
-        if(idx0 < 0) idx0 = 0;
-        if(idx0 >= list0.length) idx0 = list0.length - 1;
-        var oseg0 = list0.length ? list0[idx0] : null;
+        var idx0 = r + (ms0.segShift||0); var oseg0 = (idx0>=0 && idx0<list0.length) ? list0[idx0] : null;
 
         var types0 = getTypes(mseg, oseg0);
         for(var tt=0; tt<types0.length; tt++){
@@ -846,29 +902,48 @@
       for(var c=0;c<visible.length;c++){
         var ms2 = visible[c];
         var td = document.createElement("td");
-
-        if(ms2.id === master.id){
+        td.dataset.ms = ms2.id;
+        td.dataset.r  = r;
+if(ms2.id === master.id){
           td.textContent = mseg.txt || "";
         } else {
           var list = otherById[ms2.id] || [];
-          var idx = r + (ms2.segShift||0);
-          if(idx < 0) idx = 0;
-          if(idx >= list.length) idx = list.length - 1;
-          var oseg = list.length ? list[idx] : {txt:"", wset:{}, lset:{}};
+          var idx = r + (ms2.segShift||0); var oseg = (idx>=0 && idx<list.length) ? list[idx] : {txt:"", plain:"", wset:{}, lset:{}};
 
           if(chkHighlight.checked){
             td.innerHTML = highlightHTML(mseg, oseg);
           } else {
-            td.textContent = oseg.txt || "";
+            td.textContent = (oseg && oseg.txt) ? oseg.txt : "---";
           }
 
           var types = getTypes(mseg, oseg);
-          for(var t=0; t<types.length; t++){
-            var info = typeBadge(types[t]);
-            var b = document.createElement("span");
-            b.className = "badge " + info.cls;
-            b.textContent = info.txt; b.title = info.title || ""; td.appendChild(b);
-          }
+
+// 1) ЛЕКСИЧЕСКОЕ СОВПАДЕНИЕ: если types пустой, значит a===b.
+// Показываем (лекс) только в этом случае (и только если галочка lexical включена).
+var aPlain = (mseg && (mseg.plain || mseg.txt) || "");
+var bPlain = (oseg && (oseg.plain || oseg.txt) || "");
+if((!types || !types.length) && typeEnabled && typeEnabled.lexical && aPlain && bPlain && aPlain === bPlain){
+  var info0 = typeBadge("lexical");
+  var b0 = document.createElement("span");
+  b0.className = "badge " + info0.cls;
+  b0.textContent = info0.txt;
+  b0.title = info0.title || "";
+  td.appendChild(b0);
+}
+
+// 2) РАЗНОЧТЕНИЯ: показываем бейджи граф/фон/морф/синт.
+// lexical-РАЗЛИЧИЯ бейджем не подписываем, чтобы не было "лекс" на каждом слове.
+for(var t=0; t<types.length; t++){
+  if(types[t] === "lexical") continue;
+  if(typeEnabled && typeEnabled[types[t]] === false) continue;
+
+  var info = typeBadge(types[t]);
+  var b = document.createElement("span");
+  b.className = "badge " + info.cls;
+  b.textContent = info.txt;
+  b.title = info.title || "";
+  td.appendChild(b);
+}
         }
         tr.appendChild(td);
       }
@@ -915,7 +990,7 @@
     if(!master) return;
 
     var fromM = sheetFrom.value, toM = sheetTo.value;
-    var wps = 1; segWords.value = 1;
+    var wps = parseInt(segWords.value||"12",10) || 12;
 
     var masterSegs = segsForRange(master, fromM, toM, wps);
     var sampleN = Math.min(120, masterSegs.length);
@@ -951,7 +1026,672 @@
     render();
     statusLine.textContent = "Авто‑сдвиг выполнен. Если чуть мимо — поправь ▲▼.";
   }
+  // WORD MODE ACTIVE (clean)
+  // 1 слово = 1 сегмент, сравнение слово-к-слову. + подсказки по типам различий.
 
+  // держим "Слов/сегм" в 1
+  try{ segWords.value = 1; segWords.disabled = true; }catch(e){}
+
+  // объяснения (tooltip)
+  function typeBadge(type){
+    if(type === "graphic")  return {txt:"граф", cls:"b-graph", title:"Графические: совпадает после снятия диакритики/нормализации написания."};
+    if(type === "phonetic") return {txt:"фон",  cls:"b-phone", title:"Фонетические/орфографические: совпадает после замен ѣ→е, ѳ→ф, і→и, ѡ→о и т.п."};
+    if(type === "morph")    return {txt:"морф", cls:"b-morph", title:"Морфологические: формы разные, но лемма (lemma) совпадает (или используется форма, если lemma нет)."};
+    if(type === "syntactic")return {txt:"синт", cls:"b-syn",   title:"Синтаксические (эвристика). В режиме слово-к-слову почти не используется."};
+    return                 {txt:"лекс", cls:"b-lex",  title:"Лексические: разные слова (не совпало ни по графике, ни по фонетике, ни по лемме)."};
+  }
+
+  // 1 сегмент = 1 слово <w> (пунктуацию прицепляем к слову только для отображения)
+  function buildSegments(tokens, wordsPerSeg){
+    var segs = [];
+    var cur = null;
+
+    function flush(){
+      if(cur){
+        cur.wset = setFromWords(wordsFrom(cur.plain));
+        var ltxt = (cur.lemma || cur.plain || "");
+        cur.lset = setFromWords(wordsFrom(ltxt));
+        segs.push(cur);
+        cur = null;
+      }
+    }
+
+    for(var i=0;i<tokens.length;i++){
+      var tok = tokens[i];
+
+      if(tok.t === "w"){
+        flush();
+        var w = (tok.v || "").trim();
+        if(!w) continue;
+        cur = { txt:w, plain:w, lemma:(tok.l||"").trim(), wset:{}, lset:{} };
+        continue;
+      }
+
+      if(cur && tok.t === "p"){
+        cur.txt = (cur.txt||"").replace(/[ \t]+$/g,"") + (tok.v||"");
+        continue;
+      }
+      if(cur && tok.t === "nl"){
+        cur.txt += "\n";
+        continue;
+      }
+    }
+    flush();
+    return segs;
+  }
+
+  // тип различия для одного слова
+  function getTypes(masterSeg, otherSeg){
+    var types = [];
+    if(!otherSeg) return types;
+
+    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
+    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
+    if(!b) return types;
+
+    if(a === b) return types;
+
+    if(normGraphic(a) === normGraphic(b)){ types.push("graphic"); return types; }
+    if(normPhon(a)    === normPhon(b))   { types.push("phonetic"); return types; }
+
+    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+      types.push("morph"); return types;
+    }
+
+    types.push("lexical");
+    return types;
+  }
+
+  // подсветка по причине: граф/фон/морф -> зелёное, лекс -> красное
+  function highlightHTML(masterSeg, otherSeg){
+    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
+    var types = getTypes(masterSeg, otherSeg);
+    var primary = (types && types.length) ? types[0] : "exact";
+    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [], m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if(!isWord) out.push(esc);
+      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
+    }
+    return out.join("");
+  }
+  // PATCH v4 TYPES+AUTOSHEETS
+  // 1) Галочки типов реально влияют: выключил тип -> нет бейджа и подсветки этого типа.
+  // 2) Авто-листы: если якорь не сработал, выставляем sheetOffset по первым листам (это чинит "ЕвПог пустой").
+  // 3) В режиме "1 слово" синтаксис почти не применим, но оставлен для совместимости.
+
+  function firstSheetNum(ms){
+    var nums = sheetNums(ms);
+    if(!nums || !nums.length) return null;
+    var x = parseFloat(nums[0]);
+    return isNaN(x) ? null : x;
+  }
+
+  function autoSheets(){
+    var master = getMaster();
+    if(!master) return;
+
+    var mFirst = firstSheetNum(master);
+
+    if(master.anchor == null) master.anchor = guessAnchor(master.title);
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id){ ms.sheetOffset = 0; continue; }
+
+      if(ms.anchor == null) ms.anchor = guessAnchor(ms.title);
+
+      // 1) пробуем якоря
+      if(master.anchor != null && ms.anchor != null){
+        ms.sheetOffset = ms.anchor - master.anchor;
+      } else {
+        // 2) иначе по первым листам (очень надёжно для твоих файлов)
+        var oFirst = firstSheetNum(ms);
+        if(mFirst != null && oFirst != null) ms.sheetOffset = oFirst - mFirst;
+      }
+
+      ms._cache = null;
+    }
+
+    rebuildMsList();
+    render();
+  }
+
+  // тип разночтения для "слово-к-слову" + уважение галочек
+  function getTypes(masterSeg, otherSeg){
+    var types = [];
+    if(!otherSeg) return types;
+
+    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
+    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
+    if(!b) return types;
+
+    if(a === b) return types;
+
+    var t = null;
+    if(normGraphic(a) === normGraphic(b)) t = "graphic";
+    else if(normPhon(a) === normPhon(b))  t = "phonetic";
+    else if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)) t = "morph";
+    else t = "lexical";
+
+    // если тип выключен галочкой — делаем вид, что "разночтения нет"
+    if(t && typeof typeEnabled === "object" && typeEnabled[t] === false) return [];
+
+    return [t];
+  }
+
+  // подсветка по типу (и тоже уважает галочки, т.к. вызывает getTypes)
+  function highlightHTML(masterSeg, otherSeg){
+    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
+    var types = getTypes(masterSeg, otherSeg);
+    var primary = (types && types.length) ? types[0] : "exact";
+
+    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [], m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if(!isWord) out.push(esc);
+      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
+    }
+    return out.join("");
+  }
+  // PATCH v5 AUTOSHIFT_WINDOW
+  // AutoShift в режиме 1 слово: считаем сходство по окну из нескольких слов (стабильнее, чем по одному слову).
+  function _winSets(segs, win){
+    var keys = [];
+    for(var i=0;i<segs.length;i++){
+      var s = (segs[i] && (segs[i].plain || segs[i].txt) || "");
+      keys.push(normPhon(s));
+    }
+    var out = new Array(segs.length);
+    for(var j=0;j<segs.length;j++){
+      var set = {};
+      for(var k=0;k<win;k++){
+        var v = keys[j+k];
+        if(v === undefined) break;
+        if(v) set[v]=1;
+      }
+      out[j]=set;
+    }
+    return out;
+  }
+
+  function autoShift(){
+    var master = getMaster();
+    if(!master) return;
+
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = 1; try{ segWords.value = 1; }catch(e){}
+
+    var masterSegs = segsForRange(master, fromM, toM, wps);
+
+    // окно контекста (можно увеличить до 10, если тексты большие)
+    var WIN = 8;
+    var mWin = _winSets(masterSegs, WIN);
+
+    // сколько строк берём для подбора (больше — устойчивее, но медленнее)
+    var sampleN = Math.min(260, Math.max(0, masterSegs.length - WIN));
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id) { ms.segShift = 0; continue; }
+
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+      var otherSegs = segsForRange(ms, fromO, toO, wps);
+      var oWin = _winSets(otherSegs, WIN);
+
+      var bestShift = 0;
+      var bestScore = -1;
+
+      // диапазон сдвига. Можно расширить, если рукописи сильно "съезжают".
+      for(var sh=-220; sh<=220; sh++){
+        var sc = 0;
+        for(var r=0;r<sampleN;r++){
+          var j = r + sh;
+          if(j<0 || j>=oWin.length) continue;
+          sc += overlapScore(mWin[r], oWin[j]);
+        }
+        if(sc > bestScore){
+          bestScore = sc;
+          bestShift = sh;
+        }
+      }
+      ms.segShift = bestShift;
+    }
+
+    rebuildMsList();
+    render();
+    statusLine.textContent = "Авто‑сдвиг (окно " + WIN + " слов) выполнен. Если чуть мимо — поправь ▲▼.";
+  }
+  // PATCH v6 AUTOSHIFT_COVERAGE
+  // Более устойчивый autoShift для режима 1 слово:
+  // - сравнение идёт по окну WIN слов (контекст)
+  // - сдвиги с маленьким покрытием (слишком много пустых строк) отбрасываются/штрафуются
+
+  function _winKeys(segs, win){
+    var keys = [];
+    for(var i=0;i<segs.length;i++){
+      var s = (segs[i] && (segs[i].plain || segs[i].txt) || "");
+      keys.push(normPhon(s));
+    }
+    var out = new Array(segs.length);
+    for(var j=0;j<segs.length;j++){
+      var set = {};
+      for(var k=0;k<win;k++){
+        var v = keys[j+k];
+        if(v === undefined) break;
+        if(v) set[v]=1;
+      }
+      out[j]=set;
+    }
+    return out;
+  }
+
+  function autoShift(){
+    var master = getMaster();
+    if(!master) return;
+
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = 1; try{ segWords.value = 1; }catch(e){}
+
+    var masterSegs = segsForRange(master, fromM, toM, wps);
+
+    var WIN = 10; // контекстное окно
+    var sampleN = Math.min(320, Math.max(0, masterSegs.length - WIN));
+    if(sampleN < 30){
+      statusLine.textContent = "Авто‑сдвиг: слишком мало данных для подбора.";
+      return;
+    }
+
+    var mWin = _winKeys(masterSegs, WIN);
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id) { ms.segShift = 0; continue; }
+
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+      var otherSegs = segsForRange(ms, fromO, toO, wps);
+      var oWin = _winKeys(otherSegs, WIN);
+
+      var bestShift = 0;
+      var bestScore = -1e9;
+
+      // разумный диапазон
+      var R = 260;
+      var minSh = -R, maxSh = R;
+
+      for(var sh=minSh; sh<=maxSh; sh++){
+        var sc = 0;
+        var compared = 0;
+
+        for(var r=0; r<sampleN; r++){
+          var j = r + sh;
+          if(j<0 || j>=oWin.length) continue;
+          compared++;
+          sc += overlapScore(mWin[r], oWin[j]);
+        }
+
+        // покрытие: сколько строк реально сравнили
+        var cov = compared / sampleN;
+        if(cov < 0.70) continue; // отбрасываем сдвиги, дающие слишком много пустот
+
+        // нормируем: средний score * покрытие (штраф за пустоты)
+        var score = (sc / compared) * cov;
+
+        // небольшой штраф за слишком большой модуль сдвига (чтобы не улетать в -173 без нужды)
+        score -= Math.abs(sh) * 0.0008;
+
+        if(score > bestScore){
+          bestScore = score;
+          bestShift = sh;
+        }
+      }
+
+      ms.segShift = bestShift;
+    }
+
+    rebuildMsList();
+    render();
+    statusLine.textContent = "Авто‑сдвиг (окно " + WIN + ", с покрытием) выполнен. Если чуть мимо — поправь ▲▼.";
+  }
+  // PATCH v7 DP_ALIGN
+  // Выравнивание "слово-к-слову" с пропусками (глобальное, DP / Needleman–Wunsch).
+  // Это заменяет примитивный "один segShift" и делает результат сопоставимым с интерфейсом одногруппника.
+
+  function _segStr(seg){
+    return (seg && (seg.plain || seg.txt) || "");
+  }
+  function _lemmaStr(seg){
+    var s = (seg && (seg.lemma || "") || "").trim();
+    return s ? s : _segStr(seg);
+  }
+
+  function _matchScore(aSeg, bSeg){
+    var a = _segStr(aSeg), b = _segStr(bSeg);
+    if(!a || !b) return -2.0;
+
+    if(a === b) return 3.0;
+
+    if(normGraphic(a) === normGraphic(b)) return 2.4;
+    if(normPhon(a) === normPhon(b))       return 2.2;
+
+    // "морфологическое" на слове: леммы совпали (или подставлена форма)
+    var la = _lemmaStr(aSeg), lb = _lemmaStr(bSeg);
+    if(la && lb && normPhon(la) === normPhon(lb)) return 2.1;
+
+    return -1.8; // несовпадение
+  }
+
+  function _alignMapDP(masterSegs, otherSegs){
+    var n = masterSegs.length;
+    var m = otherSegs.length;
+
+    // штрафы
+    var GAP = -1.35;
+
+    // dp по строкам (экономим память), но trace сохраняем для обратного хода
+    var dpPrev = new Float64Array(m+1);
+    var dpCur  = new Float64Array(m+1);
+    var trace  = new Uint8Array((n+1)*(m+1)); // 0=diag,1=up(gap in other),2=left(gap in master)
+
+    // init row 0
+    dpPrev[0] = 0;
+    trace[0] = 0;
+    for(var j=1;j<=m;j++){
+      dpPrev[j] = dpPrev[j-1] + GAP;
+      trace[j] = 2;
+    }
+
+    for(var i=1;i<=n;i++){
+      dpCur[0] = dpPrev[0] + GAP;
+      trace[i*(m+1)] = 1;
+
+      for(var j=1;j<=m;j++){
+        var s = _matchScore(masterSegs[i-1], otherSegs[j-1]);
+
+        var diag = dpPrev[j-1] + s;
+        var up   = dpPrev[j]   + GAP;
+        var left = dpCur[j-1]  + GAP;
+
+        var best = diag;
+        var dir = 0;
+        if(up > best){ best = up; dir = 1; }
+        if(left > best){ best = left; dir = 2; }
+
+        dpCur[j] = best;
+        trace[i*(m+1)+j] = dir;
+      }
+
+      var tmp = dpPrev; dpPrev = dpCur; dpCur = tmp;
+    }
+
+    // traceback: строим map длиной n: для каждого master i -> индекс other j или null (пропуск)
+    var map = new Array(n);
+    for(var z=0; z<n; z++) map[z] = null;
+
+    var ii = n, jj = m;
+    while(ii>0 || jj>0){
+      var dir2 = trace[ii*(m+1)+jj];
+
+      if(ii>0 && jj>0 && dir2 === 0){
+        map[ii-1] = jj-1;
+        ii--; jj--;
+      } else if(ii>0 && dir2 === 1){
+        map[ii-1] = null; // gap в other
+        ii--;
+      } else {
+        // gap в master: jj-- (в нашей таблице лишнее слово other просто "пропускаем")
+        jj--;
+      }
+      if(jj < 0) break;
+    }
+
+    return map;
+  }
+
+  // Переопределяем autoShift: теперь это авто-выравнивание с пропусками
+  function autoShift(){
+    var master = getMaster();
+    if(!master) return;
+
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = 1; try{ segWords.value = 1; }catch(e){}
+
+    statusLine.textContent = "Авто‑сдвиг: выравнивание (DP) ...";
+
+    var masterSegs = segsForRange(master, fromM, toM, wps);
+
+    for(var i=0;i<manuscripts.length;i++){
+      var ms = manuscripts[i];
+      if(ms.id === master.id){ ms.segShift = 0; ms._alignMap = null; ms._alignKey = null; continue; }
+
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+
+      var otherSegs = segsForRange(ms, fromO, toO, wps);
+
+      var key = masterId + "|" + fromM + "|" + toM + "|" + wps + "|" + ms.id + "|" + (ms.sheetOffset||0);
+      ms._alignKey = key;
+      ms._alignMap = _alignMapDP(masterSegs, otherSegs);
+      ms.segShift = 0; // DP-выравнивание делает shift не нужен, но ручной остаётся
+    }
+
+    rebuildMsList();
+    render();
+    statusLine.textContent = "Авто‑сдвиг: DP‑выравнивание выполнено (с пропусками). Если нужно — правь ▲▼.";
+  }
+
+  // Делает пропуск видимым в режиме подсветки
+  function highlightHTML(masterSeg, otherSeg){
+    if(!otherSeg || !otherSeg.txt){
+      return '<span style="opacity:.55">---</span>';
+    }
+
+    var text = otherSeg.txt || "";
+    var types = getTypes(masterSeg, otherSeg);
+    var primary = (types && types.length) ? types[0] : "exact";
+    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [], m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if(!isWord) out.push(esc);
+      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
+    }
+    return out.join("");
+  }
+  // PATCH v9 GETTYPES RAW
+  // getTypes НЕ зависит от галочек. Галочки влияют только на фильтрацию/показ бейджей, а не на классификацию.
+  function getTypes(masterSeg, otherSeg){
+    var types = [];
+    if(!otherSeg) return types;
+
+    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
+    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
+    if(!b) return types;
+
+    if(a === b) return types; // точное совпадение -> types пустой (это будет "лексическое совпадение")
+
+    if(normGraphic(a) === normGraphic(b)){ types.push("graphic"); return types; }
+    if(normPhon(a)    === normPhon(b))   { types.push("phonetic"); return types; }
+
+    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+      types.push("morph"); return types;
+    }
+
+    types.push("lexical");
+    return types;
+  }
+  // CONTEXT PATCH v1: клик по слову -> показываем ±7 слов
+  function showContext(msId, r){
+    if(!ctxOut) return;
+
+    var master = getMaster();
+    if(!master) return;
+
+    // находим рукопись
+    var ms = null;
+    for(var i=0;i<manuscripts.length;i++){
+      if(manuscripts[i].id === msId){ ms = manuscripts[i]; break; }
+    }
+    if(!ms) return;
+
+    var segShift = (msId === master.id) ? 0 : (ms.segShift || 0);
+
+    var list = (msId === master.id)
+      ? (_lastRender.masterSegs || [])
+      : (_lastRender.otherById[msId] || []);
+
+    var start = r - 7, end = r + 7;
+    var parts = [];
+
+    for(var rr=start; rr<=end; rr++){
+      var idx = rr + segShift;
+      var seg = (idx>=0 && idx<list.length) ? list[idx] : null;
+
+      var token = seg ? (seg.plain || seg.txt || "") : "---";
+      token = (token || "").replace(/\s+/g," ").trim();
+      if(!token) token = "---";
+
+      if(rr === r){
+        parts.push('<span class="ctxHit">'+escHtml(token)+'</span>');
+      } else {
+        parts.push(escHtml(token));
+      }
+    }
+
+    ctxOut.innerHTML =
+      '<div class="ctxMeta"><b>'+escHtml(ms.title)+'</b> · строка ' + (r+1) + '</div>' +
+      parts.join(" ");
+  }
+
+  tbody.addEventListener("click", function(e){
+    var td = e.target.closest("td[data-ms][data-r]");
+    if(!td) return;
+
+    var msId = td.dataset.ms;
+    var r = parseInt(td.dataset.r, 10);
+    if(isNaN(r)) return;
+
+    showContext(msId, r);
+  });
+  // CONTEXT PATCH v2 (no gaps): показываем ±7 слов ИЗ ФАЙЛА рукописи (без DP-пропусков)
+  function _nearestMappedIndex(map, idx){
+    if(!map || idx == null) return null;
+    if(idx >= 0 && idx < map.length && map[idx] != null) return map[idx];
+
+    for(var d=1; d<Math.max(50, (map ? map.length : 0)); d++){
+      var a = idx - d, b = idx + d;
+      if(a >= 0 && map[a] != null) return map[a];
+      if(b < map.length && map[b] != null) return map[b];
+      if(a < 0 && b >= map.length) break;
+    }
+    return null;
+  }
+
+  function showContext(msId, r){
+    if(!ctxOut) return;
+
+    var master = getMaster();
+    if(!master) return;
+
+    // находим рукопись
+    var ms = null;
+    for(var i=0;i<manuscripts.length;i++){
+      if(manuscripts[i].id === msId){ ms = manuscripts[i]; break; }
+    }
+    if(!ms) return;
+
+    // учитываем ручной сдвиг (как в таблице)
+    var dispIdx = r + ((msId === master.id) ? 0 : (ms.segShift || 0));
+
+    // получаем "сырой" список слов из файла (без DP-null)
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = 1;
+
+    var rawList, rawIdx = null;
+
+    if(msId === master.id){
+      rawList = _lastRender.masterSegs || segsForRange(master, fromM, toM, wps);
+      rawIdx = Math.max(0, Math.min(dispIdx, rawList.length-1));
+    } else {
+      var fromO = (parseFloat(fromM) + (ms.sheetOffset||0)).toString();
+      var toO   = (parseFloat(toM) + (ms.sheetOffset||0)).toString();
+      rawList = segsForRange(ms, fromO, toO, wps);
+
+      // если есть DP-карта: masterIndex -> rawOtherIndex
+      var key = masterId + "|" + fromM + "|" + toM + "|" + wps + "|" + ms.id + "|" + (ms.sheetOffset||0);
+      if(ms._alignKey === key && ms._alignMap && ms._alignMap.length){
+        rawIdx = _nearestMappedIndex(ms._alignMap, dispIdx);
+      } else {
+        // без DP: просто по индексу
+        rawIdx = dispIdx;
+      }
+
+      if(rawIdx == null){
+        ctxOut.innerHTML =
+          '<div class="ctxMeta"><b>'+escHtml(ms.title)+'</b> · строка ' + (r+1) + '</div>' +
+          '<div style="opacity:.75">Здесь пропуск (выровненный gap). В рукописи нет слова в этой позиции.</div>';
+        return;
+      }
+
+      rawIdx = Math.max(0, Math.min(rawIdx, rawList.length-1));
+    }
+
+    // строим ±7 слов вокруг rawIdx (только реальные слова из файла)
+    var start = Math.max(0, rawIdx - 7);
+    var end   = Math.min(rawList.length - 1, rawIdx + 7);
+
+    var parts = [];
+    for(var j=start; j<=end; j++){
+      var seg = rawList[j];
+      var token = seg ? (seg.plain || seg.txt || "") : "";
+      token = (token || "").replace(/\s+/g," ").trim();
+      if(!token) token = "";
+
+      if(j === rawIdx){
+        parts.push('<span class="ctxHit">'+escHtml(token)+'</span>');
+      } else {
+        parts.push(escHtml(token));
+      }
+    }
+
+    ctxOut.innerHTML =
+      '<div class="ctxMeta"><b>'+escHtml(ms.title)+'</b> · контекст вокруг слова</div>' +
+      parts.join(" ");
+  }
+
+  // вешаем обработчик клика один раз
+  if(!tbody._ctxBound){
+    tbody._ctxBound = true;
+    tbody.addEventListener("click", function(e){
+      var td = e.target.closest("td[data-ms][data-r]");
+      if(!td) return;
+
+      var msId = td.dataset.ms;
+      var r = parseInt(td.dataset.r, 10);
+      if(isNaN(r)) return;
+
+      showContext(msId, r);
+    });
+  }
   // events
   chkHighlight.addEventListener("change", render);
   searchBox.addEventListener("input", function(){
@@ -1044,138 +1784,19 @@
       };
     });
   });
-  // WORD MODE OVERRIDES v3
-  // 1 слово = 1 сегмент, сравнение слово-к-слову.
-  // Пунктуация прицепляется к слову только для отображения.
-
-  // фиксируем UI
-  try{
-    segWords.value = 1;
-    segWords.min = 1;
-    segWords.max = 1;
-    segWords.disabled = true;
-  }catch(e){}
-
-  // переопределяем: разрешаем односимвольные слова
-  function setFromWords(ws){
-    var set = {};
-    for(var i=0;i<ws.length;i++){
-      var w = ws[i];
-      if(w.length < 1) continue;
-      set[w] = 1;
-    }
-    return set;
-  }
-
-  // переопределяем сегментацию: 1 сегмент = 1 слово <w>
-  function buildSegments(tokens, wordsPerSeg){
-    var segs = [];
-    var cur = null;
-
-    function flush(){
-      if(cur){
-        cur.wset = setFromWords(wordsFrom(cur.plain));
-        var ltxt = (cur.lemma || cur.plain || "");
-        cur.lset = setFromWords(wordsFrom(ltxt));
-        segs.push(cur);
-        cur = null;
-      }
-    }
-
-    for(var i=0;i<tokens.length;i++){
-      var tok = tokens[i];
-
-      if(tok.t === "w"){
-        flush();
-        var w = (tok.v || "").trim();
-        if(!w) continue;
-
-        cur = {
-          txt: w,                 // показываем (может получить пунктуацию)
-          plain: w,               // сравниваем (только слово)
-          lemma: (tok.l||"").trim(),
-          wset: {},
-          lset: {}
-        };
-        continue;
-      }
-
-      // хвостовая пунктуация/переносы — только в txt
-      if(cur && tok.t === "p"){
-        cur.txt = (cur.txt||"").replace(/[ \t]+$/g,"") + (tok.v||"");
-        continue;
-      }
-      if(cur && tok.t === "nl"){
-        cur.txt += "\n";
-        continue;
-      }
-    }
-
-    flush();
-    return segs;
-  }
-
-  // сравнение по одному слову (plain)
-  function getTypes(masterSeg, otherSeg){
-    var types = [];
-    if(!otherSeg) return types;
-
-    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
-    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
-    if(!b) return types;
-
-    if(a === b) return types; // точное совпадение -> без бейджа
-
-    var g1 = normGraphic(a), g2 = normGraphic(b);
-    if(g1 === g2){ types.push("graphic"); return types; }
-
-    var p1 = normPhon(a), p2 = normPhon(b);
-    if(p1 === p2){ types.push("phonetic"); return types; }
-
-    // морфология: по леммам (или по форме, если lemma нет)
-    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
-      types.push("morph");
-      return types;
-    }
-
-    // синтаксис в режиме слово-к-слову почти не используется
-    types.push("lexical");
-    return types;
-  }
-
-  // объяснения (tooltip) для преподавателя
-  function typeBadge(type){
-    if(type === "graphic")  return {txt:"граф", cls:"b-graph", title:"Графические: совпадает после снятия диакритики/нормализации написания."};
-    if(type === "phonetic") return {txt:"фон",  cls:"b-phone", title:"Фонетические/орфографические: совпадает после замен ѣ→е, ѳ→ф, і→и, ѡ→о и т.п."};
-    if(type === "morph")    return {txt:"морф", cls:"b-morph", title:"Морфологические: формы разные, но лемма (lemma) совпадает (или используется форма, если lemma нет)."};
-    if(type === "syntactic")return {txt:"синт", cls:"b-syn",   title:"Синтаксические (эвристика). В режиме слово-к-слову почти не используется."};
-    return                 {txt:"лекс", cls:"b-lex",  title:"Лексические: разные слова (не совпало ни по графике, ни по фонетике, ни по лемме)."};
-  }
-
-  // подсветка по типу: граф/фон/морф -> зелёное, лекс -> красное
-  function highlightHTML(masterSeg, otherSeg){
-    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
-    var types = getTypes(masterSeg, otherSeg);
-    var primary = (types && types.length) ? types[0] : "exact";
-
-    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
-    var cls = ok ? "ok" : "bad";
-
-    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
-    var out = [];
-    var m;
-    while((m = re.exec(text)) !== null){
-      var part = m[0];
-      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
-      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-      if(!isWord) out.push(esc);
-      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
-    }
-    return out.join("");
-  }
 })();
 </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
 
 
