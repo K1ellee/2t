@@ -1,9 +1,9 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>TEI‑параллельный корпус</title>
+<title>TEI‑параллельный корпус (WORD‑MODE)</title>
 <style>
   :root{
     --bg:#0b1020; --text:#e5e7eb; --muted:#a7b0c0;
@@ -164,7 +164,7 @@
   <select id="sheetTo" disabled></select>
 
   <span class="chip">Слов/сегм</span>
-  <input id="segWords" type="number" min="6" max="30" value="12" disabled style="width:86px"/>
+  <input id="segWords" type="number" min="1" max="1" value="1" disabled style="width:86px"/>
 
   <button id="btnAutoSheets" class="btn" disabled>Авто‑листы</button>
   <button id="btnAutoShift" class="btn" disabled>Авто‑сдвиг</button>
@@ -196,7 +196,7 @@
 
     <div class="box">
       <h3>Определение типа разночтений</h3>
-      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной.</div>
+      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной. Если бейджа нет — это точное совпадение слова.</div>
       <div style="height:8px"></div>
 
       <div class="row">
@@ -258,7 +258,7 @@
     masterSelect.disabled = !on;
     sheetFrom.disabled = !on;
     sheetTo.disabled = !on;
-    segWords.disabled = !on;
+    segWords.disabled = true; segWords.value = 1;
     btnAutoSheets.disabled = !on;
     btnAutoShift.disabled = !on;
     searchBox.disabled = !on;
@@ -432,7 +432,7 @@
     var set = {};
     for(var i=0;i<ws.length;i++){
       var w = ws[i];
-      if(w.length < 2) continue;
+      if(w.length < 1) continue;
       set[w] = 1;
     }
     return set;
@@ -455,46 +455,51 @@
   }
 
   function buildSegments(tokens, wordsPerSeg){
+    // WORD MODE:
+    // один сегмент = одно слово <w> (plain) + хвостовая пунктуация/переносы в txt до следующего <w>.
+    // Сравнение ведём по plain (без пунктуации).
     var segs = [];
-    var buf = "";
-    var wc = 0;
-    var lemmas = [];
+    var cur = null;
 
-    function addSpaceIfNeeded(){
-      if(!buf) return;
-      if(!/\s$/.test(buf)) buf += " ";
-    }
-    function addPunct(p){
-      buf = buf.replace(/[ \t]+$/g, "");
-      buf += p;
-    }
     function flush(){
-      var t = (buf||"").replace(/[ \t]+$/g, "");
-      if(t.replace(/\s+/g,"").length > 0){
-        var wset = setFromWords(wordsFrom(t));
-        var lset = setFromWords(wordsFrom(lemmas.join(" ")));
-        segs.push({txt:t, wset:wset, lset:lset});
+      if(cur){
+        cur.wset = setFromWords(wordsFrom(cur.plain));
+        var ltxt = (cur.lemma || cur.plain || "");
+        cur.lset = setFromWords(wordsFrom(ltxt));
+        segs.push(cur);
+        cur = null;
       }
-      buf = "";
-      wc = 0;
-      lemmas = [];
     }
 
     for(var i=0;i<tokens.length;i++){
       var tok = tokens[i];
-      if(tok.t === "nl"){
-        buf += "\n";
-      } else if(tok.t === "p"){
-        addPunct(tok.v);
-      } else if(tok.t === "w"){
-        addSpaceIfNeeded();
-        buf += tok.v;
-        wc++;
-        // для морфологии используем lemma, если нет — используем саму форму
-        lemmas.push(tok.l ? tok.l : tok.v);
-        if(wc >= wordsPerSeg) flush();
+
+      if(tok.t === "w"){
+        flush();
+        var w = (tok.v || "").trim();
+        if(!w) continue;
+
+        cur = {
+          txt: w,           // для отображения (может получить пунктуацию/переносы)
+          plain: w,         // для сравнения (только слово)
+          lemma: (tok.l || "").trim(),
+          wset: {},
+          lset: {}
+        };
+        continue;
+      }
+
+      // прицепляем пунктуацию и переносы строки к текущему слову (только для показа)
+      if(cur && tok.t === "p"){
+        cur.txt = (cur.txt || "").replace(/[ \t]+$/g, "") + (tok.v || "");
+        continue;
+      }
+      if(cur && tok.t === "nl"){
+        cur.txt += "\n";
+        continue;
       }
     }
+
     flush();
     return segs;
   }
@@ -533,22 +538,39 @@
 
   function getTypes(masterSeg, otherSeg){
     var types = [];
-    if(!otherSeg || !otherSeg.txt) return types;
-    if(masterSeg.txt === otherSeg.txt) return types;
+    if(!otherSeg) return types;
 
-    var g1 = normGraphic(masterSeg.txt);
-    var g2 = normGraphic(otherSeg.txt);
+    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
+    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
+    if(!b) return types;
+
+    // точное совпадение слова -> без бейджей
+    if(a === b) return types;
+
+    var g1 = normGraphic(a);
+    var g2 = normGraphic(b);
     if(g1 === g2){ types.push("graphic"); return types; }
 
-    var p1 = normPhon(masterSeg.txt);
-    var p2 = normPhon(otherSeg.txt);
+    var p1 = normPhon(a);
+    var p2 = normPhon(b);
     if(p1 === p2){ types.push("phonetic"); return types; }
 
-    // морфология (по леммам)
-    if(masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+    // морфология (по леммам): если леммы совпали, но формы разные
+    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
       types.push("morph");
       return types;
     }
+
+    // синтаксис (в WORD MODE почти не срабатывает, оставлено для совместимости логики)
+    var sim = jaccard((masterSeg && masterSeg.wset) || {}, (otherSeg && otherSeg.wset) || {});
+    if(sim >= 0.75){
+      types.push("syntactic");
+      return types;
+    }
+
+    types.push("lexical");
+    return types;
+  }
 
     // синтаксис (очень грубо): много общих слов, но не совпадает
     var sim = jaccard(masterSeg.wset||{}, otherSeg.wset||{});
@@ -562,25 +584,37 @@
   }
 
   function typeBadge(type){
-    if(type === "graphic") return {txt:"граф", cls:"b-graph"};
-    if(type === "phonetic") return {txt:"фон", cls:"b-phone"};
-    if(type === "morph") return {txt:"морф", cls:"b-morph"};
-    if(type === "syntactic") return {txt:"синт", cls:"b-syn"};
-    return {txt:"лекс", cls:"b-lex"};
+    if(type === "graphic")  return {txt:"граф", cls:"b-graph", title:"Графические: различия в диакритике/оформлении (после снятия диакритики совпадает)."};
+    if(type === "phonetic") return {txt:"фон",  cls:"b-phone", title:"Фонетические/орфографические: после замен ѣ→е, ѳ→ф, і→и и т.п. совпадает."};
+    if(type === "morph")    return {txt:"морф", cls:"b-morph", title:"Морфологические: формы разные, но леммы (lemma) совпадают (или совпало после подстановки формы вместо lemma)."};
+    if(type === "syntactic")return {txt:"синт", cls:"b-syn",   title:"Синтаксические (эвристика): много общих слов при различии текста. В режиме «слово-к-слову» почти не используется."};
+    return                 {txt:"лекс", cls:"b-lex",  title:"Лексические: разные слова (не совпали ни по графике, ни по фонетике, ни по леммам)."};
   }
 
   function highlightHTML(masterSeg, otherSeg){
-    var masterSet = masterSeg.wset || {};
-    var text = otherSeg.txt || "";
+    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
+    var types = getTypes(masterSeg, otherSeg);
+    var primary = (types && types.length) ? types[0] : "exact";
+
+    // что считаем "похожим" (зелёное)
+    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
     var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
     var out = [];
     var m;
     while((m = re.exec(text)) !== null){
       var part = m[0];
       var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
       if(!isWord){
-        out.push(part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"));
+        out.push(esc);
       } else {
+        out.push('<span class="tok '+cls+'">'+esc+'</span>');
+      }
+    }
+    return out.join("");
+  } else {
         var key = normPhon(part);
         var cls = masterSet[key] ? "ok" : "bad";
         var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -738,10 +772,7 @@
       sheetFrom.value = fromM; sheetTo.value = toM;
     }
 
-    var wps = parseInt(segWords.value||"12",10) || 12;
-    if(wps < 6) wps = 6;
-    if(wps > 30) wps = 30;
-    segWords.value = wps;
+    var wps = 1; segWords.value = 1;
 
     var masterSegs = segsForRange(master, fromM, toM, wps);
 
@@ -836,8 +867,7 @@
             var info = typeBadge(types[t]);
             var b = document.createElement("span");
             b.className = "badge " + info.cls;
-            b.textContent = info.txt;
-            td.appendChild(b);
+            b.textContent = info.txt; b.title = info.title || ""; td.appendChild(b);
           }
         }
         tr.appendChild(td);
@@ -885,7 +915,7 @@
     if(!master) return;
 
     var fromM = sheetFrom.value, toM = sheetTo.value;
-    var wps = parseInt(segWords.value||"12",10) || 12;
+    var wps = 1; segWords.value = 1;
 
     var masterSegs = segsForRange(master, fromM, toM, wps);
     var sampleN = Math.min(120, masterSegs.length);
@@ -1014,7 +1044,138 @@
       };
     });
   });
+  // WORD MODE OVERRIDES v3
+  // 1 слово = 1 сегмент, сравнение слово-к-слову.
+  // Пунктуация прицепляется к слову только для отображения.
+
+  // фиксируем UI
+  try{
+    segWords.value = 1;
+    segWords.min = 1;
+    segWords.max = 1;
+    segWords.disabled = true;
+  }catch(e){}
+
+  // переопределяем: разрешаем односимвольные слова
+  function setFromWords(ws){
+    var set = {};
+    for(var i=0;i<ws.length;i++){
+      var w = ws[i];
+      if(w.length < 1) continue;
+      set[w] = 1;
+    }
+    return set;
+  }
+
+  // переопределяем сегментацию: 1 сегмент = 1 слово <w>
+  function buildSegments(tokens, wordsPerSeg){
+    var segs = [];
+    var cur = null;
+
+    function flush(){
+      if(cur){
+        cur.wset = setFromWords(wordsFrom(cur.plain));
+        var ltxt = (cur.lemma || cur.plain || "");
+        cur.lset = setFromWords(wordsFrom(ltxt));
+        segs.push(cur);
+        cur = null;
+      }
+    }
+
+    for(var i=0;i<tokens.length;i++){
+      var tok = tokens[i];
+
+      if(tok.t === "w"){
+        flush();
+        var w = (tok.v || "").trim();
+        if(!w) continue;
+
+        cur = {
+          txt: w,                 // показываем (может получить пунктуацию)
+          plain: w,               // сравниваем (только слово)
+          lemma: (tok.l||"").trim(),
+          wset: {},
+          lset: {}
+        };
+        continue;
+      }
+
+      // хвостовая пунктуация/переносы — только в txt
+      if(cur && tok.t === "p"){
+        cur.txt = (cur.txt||"").replace(/[ \t]+$/g,"") + (tok.v||"");
+        continue;
+      }
+      if(cur && tok.t === "nl"){
+        cur.txt += "\n";
+        continue;
+      }
+    }
+
+    flush();
+    return segs;
+  }
+
+  // сравнение по одному слову (plain)
+  function getTypes(masterSeg, otherSeg){
+    var types = [];
+    if(!otherSeg) return types;
+
+    var a = (masterSeg && (masterSeg.plain || masterSeg.txt) || "");
+    var b = (otherSeg  && (otherSeg.plain  || otherSeg.txt)  || "");
+    if(!b) return types;
+
+    if(a === b) return types; // точное совпадение -> без бейджа
+
+    var g1 = normGraphic(a), g2 = normGraphic(b);
+    if(g1 === g2){ types.push("graphic"); return types; }
+
+    var p1 = normPhon(a), p2 = normPhon(b);
+    if(p1 === p2){ types.push("phonetic"); return types; }
+
+    // морфология: по леммам (или по форме, если lemma нет)
+    if(masterSeg && otherSeg && masterSeg.lset && otherSeg.lset && setEquals(masterSeg.lset, otherSeg.lset)){
+      types.push("morph");
+      return types;
+    }
+
+    // синтаксис в режиме слово-к-слову почти не используется
+    types.push("lexical");
+    return types;
+  }
+
+  // объяснения (tooltip) для преподавателя
+  function typeBadge(type){
+    if(type === "graphic")  return {txt:"граф", cls:"b-graph", title:"Графические: совпадает после снятия диакритики/нормализации написания."};
+    if(type === "phonetic") return {txt:"фон",  cls:"b-phone", title:"Фонетические/орфографические: совпадает после замен ѣ→е, ѳ→ф, і→и, ѡ→о и т.п."};
+    if(type === "morph")    return {txt:"морф", cls:"b-morph", title:"Морфологические: формы разные, но лемма (lemma) совпадает (или используется форма, если lemma нет)."};
+    if(type === "syntactic")return {txt:"синт", cls:"b-syn",   title:"Синтаксические (эвристика). В режиме слово-к-слову почти не используется."};
+    return                 {txt:"лекс", cls:"b-lex",  title:"Лексические: разные слова (не совпало ни по графике, ни по фонетике, ни по лемме)."};
+  }
+
+  // подсветка по типу: граф/фон/морф -> зелёное, лекс -> красное
+  function highlightHTML(masterSeg, otherSeg){
+    var text = (otherSeg && otherSeg.txt) ? otherSeg.txt : "";
+    var types = getTypes(masterSeg, otherSeg);
+    var primary = (types && types.length) ? types[0] : "exact";
+
+    var ok = (primary === "exact" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [];
+    var m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if(!isWord) out.push(esc);
+      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
+    }
+    return out.join("");
+  }
 })();
 </script>
 </body>
 </html>
+
+
