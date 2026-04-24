@@ -203,6 +203,8 @@ thead th{
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* GAP BADGE */
+.b-gap{border-color:rgba(148,163,184,.55)}
 </style>
 </head>
 <body>
@@ -228,6 +230,7 @@ thead th{
 
   <button id="btnAutoSheets" class="btn" disabled>Авто‑листы</button>
   <button id="btnAutoShift" class="btn" disabled>Авто‑сдвиг</button>
+  <button id="btnExportTEI" class="btn" disabled>Экспорт TEI</button>
 
   <div style="flex:1"></div>
   <input id="searchBox" type="text" placeholder="Поиск по master…" disabled/>
@@ -256,7 +259,7 @@ thead th{
 
     <div class="box">
       <h3>Определение типа разночтений</h3>
-      <div class="hint">Определение приблизительное (эвристика), но достаточно для лабораторной.</div>
+      
       <div style="height:8px"></div>
 
       <div class="row">
@@ -306,6 +309,7 @@ thead th{
   var segWords = document.getElementById("segWords");
   var btnAutoSheets = document.getElementById("btnAutoSheets");
   var btnAutoShift = document.getElementById("btnAutoShift");
+  var btnExportTEI = document.getElementById("btnExportTEI");
   var searchBox = document.getElementById("searchBox");
 
   var chkHighlight = document.getElementById("chkHighlight");
@@ -334,6 +338,7 @@ function setEnabled(on){
     segWords.disabled = !on;
     btnAutoSheets.disabled = !on;
     btnAutoShift.disabled = !on;
+    btnExportTEI.disabled = !on;
     searchBox.disabled = !on;
   }
   setEnabled(false);
@@ -918,24 +923,10 @@ if(ms2.id === master.id){
 
           var types = getTypes(mseg, oseg);
 
-// 1) ЛЕКСИЧЕСКОЕ СОВПАДЕНИЕ: если types пустой, значит a===b.
-// Показываем (лекс) только в этом случае (и только если галочка lexical включена).
-var aPlain = (mseg && (mseg.plain || mseg.txt) || "");
-var bPlain = (oseg && (oseg.plain || oseg.txt) || "");
-if((!types || !types.length) && typeEnabled && typeEnabled.lexical && aPlain && bPlain && aPlain === bPlain){
-  var info0 = typeBadge("lexical");
-  var b0 = document.createElement("span");
-  b0.className = "badge " + info0.cls;
-  b0.textContent = info0.txt;
-  b0.title = info0.title || "";
-  td.appendChild(b0);
-}
-
 // 2) РАЗНОЧТЕНИЯ: показываем бейджи граф/фон/морф/синт.
 // lexical-РАЗЛИЧИЯ бейджем не подписываем, чтобы не было "лекс" на каждом слове.
 for(var t=0; t<types.length; t++){
-  if(types[t] === "lexical") continue;
-  if(typeEnabled && typeEnabled[types[t]] === false) continue;
+if(typeEnabled && typeEnabled[types[t]] === false) continue;
 
   var info = typeBadge(types[t]);
   var b = document.createElement("span");
@@ -1692,6 +1683,741 @@ for(var t=0; t<types.length; t++){
       showContext(msId, r);
     });
   }
+  // ===============================
+  // ALIGN PATCH v10 FROM CLASSMATE
+  // Парсинг <w> и DP-выравнивание как в репозитории одногруппника
+  // ===============================
+
+  // 1) Сбор текста слова внутри <w> (склеиваем все текст-ноды, убираем пробелы)
+  function wordText(wNode){
+    var form = "";
+    try{
+      var tw = document.createTreeWalker(wNode, NodeFilter.SHOW_TEXT, null);
+      var tNode;
+      while((tNode = tw.nextNode())){
+        form += (tNode.nodeValue || "").replace(/\s+/g, "");
+      }
+    }catch(e){
+      // fallback на старый способ
+      var ch = wNode.childNodes || [];
+      for(var i=0;i<ch.length;i++){
+        if(ch[i].nodeType === 3) form += (ch[i].textContent||"").replace(/\s+/g,"");
+      }
+    }
+    return (form || "").trim();
+  }
+
+  // 2) Парсер TEI: не ограничиваемся первым <ab>, обходим весь <body>
+  function parseTei(xmlText){
+    var parser = new DOMParser();
+    var doc = parser.parseFromString(xmlText, "application/xml");
+    if(doc.getElementsByTagName("parsererror").length){
+      throw new Error("XML parse error");
+    }
+
+    var title = titleFromTei(doc);
+    var sheets = {};
+    var curSheet = null;
+
+    function ensureSheet(n){
+      if(!sheets[n]) sheets[n] = {tokens:[]};
+    }
+    function addTok(t,v,l){
+      if(curSheet === null) return;
+      ensureSheet(curSheet);
+      sheets[curSheet].tokens.push({t:t, v:v, l:l||""});
+    }
+
+    var body = doc.getElementsByTagNameNS(TEI_NS, "body")[0] || doc.getElementsByTagName("body")[0];
+    if(!body) return {title:title, sheets:{}};
+
+    function walk(node){
+      if(!node) return;
+
+      if(node.nodeType === 1){
+        var ln = (node.localName || node.nodeName || "").toLowerCase();
+
+        if(ln === "milestone" && node.getAttribute("unit") === "sheet"){
+          curSheet = node.getAttribute("n");
+          ensureSheet(curSheet);
+          return;
+        }
+
+        if(ln === "w"){
+          var w = wordText(node);
+          var lemma = (node.getAttribute("lemma") || "").trim();
+          if(w) addTok("w", w, lemma);
+          return;
+        }
+
+        if(ln === "pc"){
+          if(node.getAttribute("type") !== "space"){
+            var p = (node.textContent || "").trim();
+            if(p) addTok("p", p, "");
+          }
+          return;
+        }
+
+        if(ln === "lb" || ln === "cb"){
+          addTok("nl", "\n", "");
+          return;
+        }
+
+        if(ln === "pb" || ln === "fs"){
+          return;
+        }
+
+        for(var i=0;i<node.childNodes.length;i++){
+          walk(node.childNodes[i]);
+        }
+      }
+    }
+
+    walk(body);
+    return {title:title, sheets:sheets};
+  }
+
+  // 3) Нормализация "как у одногруппника" для similarity
+  function _cleanBaseText(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // убрать диакритику/титла/комбинируемые знаки
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+
+    // убрать пунктуацию/пробелы/скобки
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+
+    // whitelist (как в variants.js одногруппника)
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+
+    return s.trim();
+  }
+
+  function _levenshtein(a, b){
+    var n = a.length, m = b.length;
+    if(n === 0) return m;
+    if(m === 0) return n;
+
+    var prev = new Uint16Array(m + 1);
+    var curr = new Uint16Array(m + 1);
+    for(var j=0;j<=m;j++) prev[j] = j;
+
+    for(var i=1;i<=n;i++){
+      curr[0] = i;
+      var ai = a.charCodeAt(i - 1);
+      for(var jj=1;jj<=m;jj++){
+        var cost = (ai === b.charCodeAt(jj - 1)) ? 0 : 1;
+        var v1 = prev[jj] + 1;
+        var v2 = curr[jj - 1] + 1;
+        var v3 = prev[jj - 1] + cost;
+        var best = v1 < v2 ? v1 : v2;
+        if(v3 < best) best = v3;
+        curr[jj] = best;
+      }
+      prev.set(curr);
+    }
+    return prev[m];
+  }
+
+  function _similarity(a, b){
+    if(!a && !b) return 1;
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+
+    var a60 = a.slice(0, 60);
+    var b60 = b.slice(0, 60);
+    var d = _levenshtein(a60, b60);
+    var max = Math.max(a.length, b.length);
+    return max === 0 ? 1 : (1 - d / max);
+  }
+
+  function _segForm(seg){
+    return (seg && (seg.plain || seg.txt) || "");
+  }
+  function _segLemma(seg){
+    return (seg && (seg.lemma || "") || "");
+  }
+
+  // 4) DP-выравнивание "как у одногруппника": minimize cost = 1 - similarity, GAP=0.65
+  function _alignMapDP(masterSegs, otherSegs){
+    var n = masterSegs.length;
+    var m = otherSegs.length;
+    if(n === 0) return [];
+    if(m === 0) return Array(n).fill(null);
+
+    var GAP = 0.65;
+
+    // precompute cleaned forms/lemmas (ускоряет сильно)
+    var mForm = new Array(n), mLemma = new Array(n);
+    for(var i=0;i<n;i++){
+      mForm[i] = _cleanBaseText(_segForm(masterSegs[i]));
+      mLemma[i] = _cleanBaseText(_segLemma(masterSegs[i]));
+    }
+    var oForm = new Array(m), oLemma = new Array(m);
+    for(var j=0;j<m;j++){
+      oForm[j] = _cleanBaseText(_segForm(otherSegs[j]));
+      oLemma[j] = _cleanBaseText(_segLemma(otherSegs[j]));
+    }
+
+    function simAt(ii, jj){
+      var la = mLemma[ii], lb = oLemma[jj];
+      if(la && lb && la === lb) return 1.0;
+      return _similarity(mForm[ii], oForm[jj]);
+    }
+
+    // dp with trace (memory-friendly)
+    var dpPrev = new Float32Array(m+1);
+    var dpCur  = new Float32Array(m+1);
+    // 1=diag, 2=up(gap in other), 3=left(gap in master)
+    var trace  = new Uint8Array((n+1)*(m+1));
+
+    dpPrev[0] = 0;
+    trace[0] = 0;
+
+    for(var jj=1;jj<=m;jj++){
+      dpPrev[jj] = dpPrev[jj-1] + GAP;
+      trace[jj] = 3;
+    }
+
+    for(var ii=1;ii<=n;ii++){
+      dpCur[0] = dpPrev[0] + GAP;
+      trace[ii*(m+1)] = 2;
+
+      for(var jj2=1;jj2<=m;jj2++){
+        var sim = simAt(ii-1, jj2-1);
+        var cost = 1.0 - sim;
+
+        var diag = dpPrev[jj2-1] + cost;
+        var up   = dpPrev[jj2]   + GAP;
+        var left = dpCur[jj2-1]  + GAP;
+
+        var best = diag;
+        var dir = 1;
+        if(up < best){ best = up; dir = 2; }
+        if(left < best){ best = left; dir = 3; }
+
+        dpCur[jj2] = best;
+        trace[ii*(m+1)+jj2] = dir;
+      }
+
+      var tmp = dpPrev; dpPrev = dpCur; dpCur = tmp;
+    }
+
+    var mapping = new Array(n);
+    for(var z=0; z<n; z++) mapping[z] = null;
+
+    var i2 = n, j2 = m;
+    while(i2 > 0 || j2 > 0){
+      var dir2 = trace[i2*(m+1)+j2];
+
+      if(i2 > 0 && j2 > 0 && dir2 === 1){
+        mapping[i2-1] = j2-1; i2--; j2--;
+      } else if(i2 > 0 && dir2 === 2){
+        mapping[i2-1] = null; i2--;
+      } else {
+        j2--;
+      }
+      if(j2 < 0) break;
+    }
+
+    return mapping;
+  }
+  // ==========================================
+  // VARIANTS PATCH v11 CLASSMATE (types+identical) + FIX BADGE POSITION
+  // 1) "Идентично" = зелёное (types пустой), без бейджа
+  // 2) Типы как у одногруппника: similarity>=0.72 -> graphic+phonetic, lemmaEq -> morph, иначе lexical
+  // 3) Убираем \n из слова в word-mode, чтобы бейдж не уезжал на строку ниже
+  // ==========================================
+
+  // 1 слово = 1 сегмент <w>, пунктуацию цепляем к слову (для отображения),
+  // но переносы строк (nl) НЕ добавляем в txt (иначе бейджи падают вниз).
+  function buildSegments(tokens, wordsPerSeg){
+    var segs = [];
+    var cur = null;
+
+    function flush(){
+      if(cur){
+        cur.wset = setFromWords(wordsFrom(cur.plain));
+        var ltxt = (cur.lemma || cur.plain || "");
+        cur.lset = setFromWords(wordsFrom(ltxt));
+        segs.push(cur);
+        cur = null;
+      }
+    }
+
+    for(var i=0;i<tokens.length;i++){
+      var tok = tokens[i];
+
+      if(tok.t === "w"){
+        flush();
+        var w = (tok.v || "").trim();
+        if(!w) continue;
+        cur = { txt:w, plain:w, lemma:(tok.l||"").trim(), wset:{}, lset:{} };
+        continue;
+      }
+
+      if(cur && tok.t === "p"){
+        cur.txt = (cur.txt||"").replace(/[ \t]+$/g,"") + (tok.v||"");
+        continue;
+      }
+
+      if(cur && tok.t === "nl"){
+        // ВАЖНО: не добавляем "\n" к слову
+        continue;
+      }
+    }
+
+    flush();
+    return segs;
+  }
+
+  // Жёсткая очистка (как у одногруппника), но без \p{M} (чтобы не зависеть от движка)
+  function _cleanBaseText_v11(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // убрать комбинируемые знаки/титла/надстрочные
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+
+    // убрать пунктуацию/пробелы/скобки
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+
+    // whitelist
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+
+    return s.trim();
+  }
+
+  function _levenshtein_v11(a, b){
+    var n = a.length, m = b.length;
+    if(n === 0) return m;
+    if(m === 0) return n;
+
+    var prev = new Uint16Array(m + 1);
+    var curr = new Uint16Array(m + 1);
+    for(var j=0;j<=m;j++) prev[j] = j;
+
+    for(var i=1;i<=n;i++){
+      curr[0] = i;
+      var ai = a.charCodeAt(i - 1);
+      for(var jj=1;jj<=m;jj++){
+        var cost = (ai === b.charCodeAt(jj - 1)) ? 0 : 1;
+        var v1 = prev[jj] + 1;
+        var v2 = curr[jj - 1] + 1;
+        var v3 = prev[jj - 1] + cost;
+        var best = v1 < v2 ? v1 : v2;
+        if(v3 < best) best = v3;
+        curr[jj] = best;
+      }
+      prev.set(curr);
+    }
+    return prev[m];
+  }
+
+  function _similarity_v11(a, b){
+    if(!a && !b) return 1;
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+
+    var a60 = a.slice(0, 60);
+    var b60 = b.slice(0, 60);
+    var d = _levenshtein_v11(a60, b60);
+    var max = Math.max(a.length, b.length);
+    return max === 0 ? 1 : (1 - d / max);
+  }
+
+  // Переопределяем getTypes: классификация как у одногруппника
+  // "Идентично" -> types пустой (зелёное, без бейджа)
+  function getTypes(masterSeg, otherSeg){
+    // gap считаем лексическим различием для фильтра "onlyVariants"
+    if(!otherSeg || !(otherSeg.txt || otherSeg.plain)) return ["lexical"];
+
+    var aForm = _cleanBaseText_v11((masterSeg && (masterSeg.plain || masterSeg.txt)) || "");
+    var bForm = _cleanBaseText_v11((otherSeg  && (otherSeg.plain  || otherSeg.txt))  || "");
+
+    // 1) Идентично после тотальной очистки (это "зелёное совпадение")
+    if(aForm && bForm && aForm === bForm){
+      return [];
+    }
+
+    // 2) similarity по очищенным формам
+    var sim = _similarity_v11(aForm, bForm);
+
+    // 3) lemmaEq (тоже очищенное)
+    var la = _cleanBaseText_v11((masterSeg && (masterSeg.lemma || "")) || "");
+    var lb = _cleanBaseText_v11((otherSeg  && (otherSeg.lemma  || "")) || "");
+    var lemmaEq = la && lb && la === lb;
+
+    // Логика как у одногруппника
+    if(sim >= 0.72){
+      return ["graphic","phonetic"];
+    }
+    if(lemmaEq){
+      return ["morph"];
+    }
+    return ["lexical"];
+  }
+  // ==========================================
+  // VARIANTS PATCH v12 GAP+IDENTICAL (classmate-like)
+  // gap -> "пропуск", identical -> зелёное без бейджа, lexical -> только для реальных различий
+  // ==========================================
+
+  // typeEnabled: добавляем gap (без чекбокса, просто чтобы фильтр строк не ломался)
+  try{ if(typeof typeEnabled === "object") typeEnabled.gap = true; }catch(e){}
+
+  // Бейджи
+  function typeBadge(type){
+    if(type === "gap")      return {txt:"пропуск", cls:"b-gap",  title:"Пропуск (gap) по DP-выравниванию."};
+    if(type === "graphic")  return {txt:"граф",    cls:"b-graph", title:"Графическое/орфографическое сходство."};
+    if(type === "phonetic") return {txt:"фон",     cls:"b-phone", title:"Фонетическое сходство."};
+    if(type === "morph")    return {txt:"морф",    cls:"b-morph", title:"Морфологическое (леммы совпали)."};
+    if(type === "syntactic")return {txt:"синт",    cls:"b-syn",   title:"Синтаксическое (если используется)."};
+    return                  {txt:"лекс",    cls:"b-lex",   title:"Лексическое (разные слова)."};
+  }
+
+  // Очистка текста как у одногруппника (без \p{M} для совместимости)
+  function _cleanBaseText_v12(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // комбинируемые/надстрочные/титла
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+
+    // пунктуация/пробелы
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+
+    // whitelist
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+
+    return s.trim();
+  }
+
+  function _levenshtein_v12(a, b){
+    var n = a.length, m = b.length;
+    if(n === 0) return m;
+    if(m === 0) return n;
+
+    var prev = new Uint16Array(m + 1);
+    var curr = new Uint16Array(m + 1);
+    for(var j=0;j<=m;j++) prev[j] = j;
+
+    for(var i=1;i<=n;i++){
+      curr[0] = i;
+      var ai = a.charCodeAt(i - 1);
+      for(var jj=1;jj<=m;jj++){
+        var cost = (ai === b.charCodeAt(jj - 1)) ? 0 : 1;
+        var v1 = prev[jj] + 1;
+        var v2 = curr[jj - 1] + 1;
+        var v3 = prev[jj - 1] + cost;
+        var best = v1 < v2 ? v1 : v2;
+        if(v3 < best) best = v3;
+        curr[jj] = best;
+      }
+      prev.set(curr);
+    }
+    return prev[m];
+  }
+
+  function _similarity_v12(a, b){
+    if(!a && !b) return 1;
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+
+    var d = _levenshtein_v12(a.slice(0,60), b.slice(0,60));
+    var max = Math.max(a.length, b.length);
+    return max === 0 ? 1 : (1 - d / max);
+  }
+
+  // Классификация типов (как у одногруппника по смыслу)
+  // identical => []
+  // gap => ["gap"]
+  // sim>=0.72 => ["graphic","phonetic"]
+  // lemmaEq => ["morph"]
+  // else => ["lexical"]
+  function getTypes(masterSeg, otherSeg){
+    // GAP: если сегмента нет или пустой текст
+    var bRaw = (otherSeg && (otherSeg.plain || otherSeg.txt)) ? (otherSeg.plain || otherSeg.txt) : "";
+    if(!bRaw) return ["gap"];
+
+    var aRaw = (masterSeg && (masterSeg.plain || masterSeg.txt)) ? (masterSeg.plain || masterSeg.txt) : "";
+
+    var A = _cleanBaseText_v12(aRaw);
+    var B = _cleanBaseText_v12(bRaw);
+
+    // identical после очистки -> зелёное, без бейджей
+    if(A && B && A === B) return [];
+
+    var sim = _similarity_v12(A, B);
+
+    var la = _cleanBaseText_v12((masterSeg && (masterSeg.lemma || "")) || "");
+    var lb = _cleanBaseText_v12((otherSeg  && (otherSeg.lemma  || "")) || "");
+    var lemmaEq = la && lb && la === lb;
+
+    if(sim >= 0.72) return ["graphic","phonetic"];
+    if(lemmaEq) return ["morph"];
+    return ["lexical"];
+  }
+  // ==========================================
+  // VARIANTS PATCH v13 GAP NOT LEX (classmate-like)
+  // gap -> "пропуск", identical -> зелёное без бейджа, lexical -> только для реальных различий
+  // ==========================================
+
+  // чтобы строки с gap попадали в фильтр onlyVariants:
+  try{ if(typeof typeEnabled === "object") typeEnabled.gap = true; }catch(e){}
+
+  // бейджи (добавили gap)
+  function typeBadge(type){
+    if(type === "gap")      return {txt:"пропуск", cls:"b-gap",  title:"Пропуск (gap) по DP-выравниванию."};
+    if(type === "graphic")  return {txt:"граф",    cls:"b-graph"};
+    if(type === "phonetic") return {txt:"фон",     cls:"b-phone"};
+    if(type === "morph")    return {txt:"морф",    cls:"b-morph"};
+    if(type === "syntactic")return {txt:"синт",    cls:"b-syn"};
+    return                  {txt:"лекс",    cls:"b-lex"};
+  }
+
+  // очистка как у одногруппника (без \p{M}, чтобы работало везде)
+  function _cleanBaseText_v13(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // комбинируемые/надстрочные/титла
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+    // пунктуация/пробелы
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+    // whitelist
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+
+    return s.trim();
+  }
+
+  function _levenshtein_v13(a, b){
+    var n = a.length, m = b.length;
+    if(n === 0) return m;
+    if(m === 0) return n;
+
+    var prev = new Uint16Array(m + 1);
+    var curr = new Uint16Array(m + 1);
+    for(var j=0;j<=m;j++) prev[j] = j;
+
+    for(var i=1;i<=n;i++){
+      curr[0] = i;
+      var ai = a.charCodeAt(i - 1);
+      for(var jj=1;jj<=m;jj++){
+        var cost = (ai === b.charCodeAt(jj - 1)) ? 0 : 1;
+        var v1 = prev[jj] + 1;
+        var v2 = curr[jj - 1] + 1;
+        var v3 = prev[jj - 1] + cost;
+        var best = v1 < v2 ? v1 : v2;
+        if(v3 < best) best = v3;
+        curr[jj] = best;
+      }
+      prev.set(curr);
+    }
+    return prev[m];
+  }
+
+  function _similarity_v13(a, b){
+    if(!a && !b) return 1;
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+
+    var d = _levenshtein_v13(a.slice(0,60), b.slice(0,60));
+    var max = Math.max(a.length, b.length);
+    return max === 0 ? 1 : (1 - d / max);
+  }
+
+  // Классификация как у одногруппника по смыслу:
+  // GAP: ["gap"]
+  // IDENTICAL: [] (зелёное, без бейджа)
+  // sim>=0.72: ["graphic","phonetic"]
+  // lemmaEq: ["morph"]
+  // else: ["lexical"]
+  function getTypes(masterSeg, otherSeg){
+    var bRaw = (otherSeg && (otherSeg.plain || otherSeg.txt)) ? (otherSeg.plain || otherSeg.txt) : "";
+    if(!bRaw) return ["gap"];
+
+    var aRaw = (masterSeg && (masterSeg.plain || masterSeg.txt)) ? (masterSeg.plain || masterSeg.txt) : "";
+
+    var A = _cleanBaseText_v13(aRaw);
+    var B = _cleanBaseText_v13(bRaw);
+
+    // идентично (после очистки) -> совпало
+    if(A && B && A === B) return [];
+
+    var sim = _similarity_v13(A, B);
+
+    var la = _cleanBaseText_v13((masterSeg && (masterSeg.lemma || "")) || "");
+    var lb = _cleanBaseText_v13((otherSeg  && (otherSeg.lemma  || "")) || "");
+    var lemmaEq = la && lb && la === lb;
+
+    if(sim >= 0.72) return ["graphic","phonetic"];
+    if(lemmaEq) return ["morph"];
+    return ["lexical"];
+  }
+  // PATCH v14 FILTER_GAP_OFF: gaps НЕ участвуют в фильтрах по типам (иначе "только выбранные" не работает)
+  try{ if(typeof typeEnabled === "object" && typeEnabled) { delete typeEnabled.gap; } }catch(e){}
+  // ===============================
+  // EXPORT TEI PATCH v1
+  // Экспорт текущего параллельного просмотра в TEI XML (таблица <table><row><cell>)
+  // ===============================
+
+  function _xmlEscape(s){
+    return String(s ?? "")
+      .replace(/&/g,"&amp;")
+      .replace(/</g,"&lt;")
+      .replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;")
+      .replace(/'/g,"&apos;");
+  }
+
+  function _safeXmlId(id){
+    var s = String(id ?? "").replace(/[^A-Za-z0-9_.-]/g, "_");
+    if(!/^[A-Za-z_]/.test(s)) s = "w_" + s;
+    return s || ("w_" + Math.random().toString(16).slice(2));
+  }
+
+  function _downloadText(filename, text, mime){
+    try{
+      var blob = new Blob([text], {type: mime || "application/xml;charset=utf-8"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = filename || "export.xml";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function(){
+        URL.revokeObjectURL(url);
+        a.remove();
+      }, 0);
+    }catch(e){
+      alert("Не удалось скачать файл: " + e);
+    }
+  }
+
+  function exportCurrentToTEI(){
+    var master = getMaster();
+    if(!master){ alert("Сначала загрузите файлы."); return; }
+
+    // Берём последние данные render() (они уже учитывают DP-align массивы с null)
+    var visible = (_lastRender && _lastRender.visible && _lastRender.visible.length)
+      ? _lastRender.visible
+      : manuscripts.filter(function(m){ return m.visible; });
+
+    // masterSegs по текущему диапазону
+    var fromM = sheetFrom.value, toM = sheetTo.value;
+    var wps = 1;
+    var masterSegs = (_lastRender && _lastRender.masterSegs && _lastRender.masterSegs.length)
+      ? _lastRender.masterSegs
+      : segsForRange(master, fromM, toM, wps);
+
+    var otherById = (_lastRender && _lastRender.otherById) ? _lastRender.otherById : {};
+
+    // фильтры как в render()
+    var q = (searchBox.value||"").toLowerCase().trim();
+    var mode = rowFilterMode.value;
+
+    var tei = [];
+    tei.push('<?xml version="1.0" encoding="UTF-8"?>');
+    tei.push('<TEI xmlns="http://www.tei-c.org/ns/1.0">');
+    tei.push('  <teiHeader>');
+    tei.push('    <fileDesc>');
+    tei.push('      <titleStmt><title>Parallel TEI export</title></titleStmt>');
+    tei.push('      <publicationStmt><p>Generated by TEI-parallel corpus viewer</p></publicationStmt>');
+    tei.push('      <sourceDesc><p>Witnesses uploaded in browser.</p></sourceDesc>');
+    tei.push('    </fileDesc>');
+    tei.push('    <encodingDesc>');
+    tei.push('      <listWit>');
+    for(var i=0;i<visible.length;i++){
+      var ms = visible[i];
+      tei.push('        <witness xml:id="'+_xmlEscape(_safeXmlId(ms.id))+'"><abbr>'+_xmlEscape(ms.title)+'</abbr></witness>');
+    }
+    tei.push('      </listWit>');
+    tei.push('    </encodingDesc>');
+    tei.push('  </teiHeader>');
+    tei.push('  <text>');
+    tei.push('    <body>');
+    tei.push('      <table>');
+
+    // Заголовок таблицы
+    tei.push('        <row role="header">');
+    tei.push('          <cell>№</cell>');
+    for(var h=0;h<visible.length;h++){
+      var msH = visible[h];
+      var label = msH.title + (msH.id===master.id ? " (master)" : "");
+      tei.push('          <cell>'+_xmlEscape(label)+'</cell>');
+    }
+    tei.push('        </row>');
+
+    var outRowN = 0;
+
+    for(var r=0; r<masterSegs.length; r++){
+      var mseg = masterSegs[r];
+      if(q && (mseg.txt||"").toLowerCase().indexOf(q) === -1) continue;
+
+      // фильтрация onlyVariants — как в render()
+      var rowHasSelected = false;
+
+      for(var c0=0;c0<visible.length;c0++){
+        var ms0 = visible[c0];
+        if(ms0.id === master.id) continue;
+
+        var list0 = otherById[ms0.id] || [];
+        var idx0 = r + (ms0.segShift||0);
+        var oseg0 = (idx0>=0 && idx0<list0.length) ? list0[idx0] : null;
+
+        var types0 = getTypes(mseg, oseg0) || [];
+        for(var tt=0; tt<types0.length; tt++){
+          var tname = types0[tt];
+          // gap не завязан на чекбоксы — всегда считаем вариантом
+          if(tname === "gap"){ rowHasSelected = true; continue; }
+          if(typeEnabled && typeEnabled[tname]) rowHasSelected = true;
+        }
+      }
+
+      if(mode === "onlyVariants" && !rowHasSelected) continue;
+
+      outRowN++;
+      tei.push('        <row n="'+outRowN+'">');
+      tei.push('          <cell>'+_xmlEscape(String(r+1))+'</cell>');
+
+      // master cell
+      tei.push('          <cell wit="#'+_xmlEscape(_safeXmlId(master.id))+'">'+_xmlEscape(mseg.txt||"")+'</cell>');
+
+      // other cells
+      for(var c=0;c<visible.length;c++){
+        var ms2 = visible[c];
+        if(ms2.id === master.id) continue;
+
+        var list = otherById[ms2.id] || [];
+        var idx = r + (ms2.segShift||0);
+        var oseg = (idx>=0 && idx<list.length) ? list[idx] : null;
+
+        var types = getTypes(mseg, oseg) || [];
+        var ana = types.length ? types.join(" ") : "identical";
+
+        if(!oseg || !(oseg.txt||oseg.plain)){
+          tei.push('          <cell wit="#'+_xmlEscape(_safeXmlId(ms2.id))+'" ana="gap"><gap reason="omitted"/></cell>');
+        } else {
+          tei.push('          <cell wit="#'+_xmlEscape(_safeXmlId(ms2.id))+'" ana="'+_xmlEscape(ana)+'">'+_xmlEscape(oseg.txt||"")+'</cell>');
+        }
+      }
+
+      tei.push('        </row>');
+    }
+
+    tei.push('      </table>');
+    tei.push('    </body>');
+    tei.push('  </text>');
+    tei.push('</TEI>');
+
+    _downloadText("parallel_export.tei.xml", tei.join("\n"), "application/xml;charset=utf-8");
+  }
+
   // events
   chkHighlight.addEventListener("change", render);
   searchBox.addEventListener("input", function(){
@@ -1721,6 +2447,7 @@ for(var t=0; t<types.length; t++){
 
   btnAutoSheets.addEventListener("click", autoSheets);
   btnAutoShift.addEventListener("click", autoShift);
+  btnExportTEI.addEventListener("click", exportCurrentToTEI);
 
   // file loading
   fileInput.addEventListener("change", function(e){
@@ -1788,6 +2515,13 @@ for(var t=0; t<types.length; t++){
 </script>
 </body>
 </html>
+
+
+
+
+
+
+
 
 
 
