@@ -13,6 +13,22 @@
   font-style: normal;
   font-display: swap;
 }
+
+/* FONT ADD v1 */
+@font-face{
+  font-family: "FedorovskUnicode";
+  src: url("fonts/FedorovskUnicode.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face{
+  font-family: "MonomakhUnicode";
+  src: url("fonts/MonomakhUnicode.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
 /* Применяем к основному тексту корпуса (таблица) */
 thead th, tbody td{
   font-family: "PonomarUnicode", Verdana, Tahoma, Arial, sans-serif;
@@ -205,6 +221,12 @@ thead th{
 }
 /* GAP BADGE */
 .b-gap{border-color:rgba(148,163,184,.55)}
+/* FONT FALLBACK PATCH v1 */
+thead th, tbody td, #ctxBox, #ctxBox *{
+  font-family: "PonomarUnicode","FedorovskUnicode","MonomakhUnicode",Verdana,Tahoma,Arial,sans-serif !important;
+}
+/* LEMMA COLUMN PATCH */
+.col-lemma{width:120px; font-size:12px; color:rgba(229,231,235,.72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 </style>
 </head>
 <body>
@@ -862,7 +884,11 @@ function setEnabled(on){
     var th0 = document.createElement("th");
     th0.textContent = "№ / сегмент";
     trh.appendChild(th0);
-    for(var i=0;i<visible.length;i++){
+
+    var thL = document.createElement("th");
+    thL.textContent = "Лемма (master)";
+    trh.appendChild(thL);
+for(var i=0;i<visible.length;i++){
       var th = document.createElement("th");
       th.textContent = visible[i].title + (visible[i].id===master.id ? " (master)" : "");
       trh.appendChild(th);
@@ -890,9 +916,14 @@ function setEnabled(on){
         var list0 = otherById[ms0.id] || [];
         var idx0 = r + (ms0.segShift||0); var oseg0 = (idx0>=0 && idx0<list0.length) ? list0[idx0] : null;
 
-        var types0 = getTypes(mseg, oseg0);
+        var types0 = getTypes(mseg, oseg0) || [];
         for(var tt=0; tt<types0.length; tt++){
-          if(typeEnabled[types0[tt]]) rowHasSelected = true;
+          var tnm = types0[tt];
+          if(tnm === "gap"){
+            if(typeEnabled && typeEnabled.lexical) rowHasSelected = true;
+          } else {
+            if(typeEnabled && typeEnabled[tnm]) rowHasSelected = true;
+          }
         }
       }
 
@@ -904,7 +935,11 @@ function setEnabled(on){
       tdId.textContent = (r+1);
       tr.appendChild(tdId);
 
-      for(var c=0;c<visible.length;c++){
+      var tdLemma = document.createElement("td");
+      tdLemma.className = "col-lemma";
+      tdLemma.textContent = (mseg && (mseg.lemma || "") ? mseg.lemma : "—");
+      tr.appendChild(tdLemma);
+for(var c=0;c<visible.length;c++){
         var ms2 = visible[c];
         var td = document.createElement("td");
         td.dataset.ms = ms2.id;
@@ -2417,6 +2452,190 @@ if(typeEnabled && typeEnabled[types[t]] === false) continue;
 
     _downloadText("parallel_export.tei.xml", tei.join("\n"), "application/xml;charset=utf-8");
   }
+  // ==========================================
+  // PATCH v15 CLASSMATE VARIANTS FINAL
+  // Логика как у одногруппника, внешний вид оставляем как у тебя:
+  // - identical (после очистки) -> types=[] (зелёное, без бейджа)
+  // - sim>=0.72 -> ["graphic","phonetic"]
+  // - lemmaEq -> ["morph"]
+  // - иначе -> ["lexical"]
+  // - пропуск -> ["gap"] (бейдж "пропуск")
+  // ==========================================
+
+  // Если где-то ранее добавляли typeEnabled.gap — убираем (чтобы не ломало фильтры)
+  try{ if(typeof typeEnabled === "object" && typeEnabled) { delete typeEnabled.gap; } }catch(e){}
+
+  // Бейджи (как у тебя) + добавляем "пропуск"
+  function typeBadge(type){
+    if(type === "gap")      return {txt:"пропуск", cls:"b-gap"};
+    if(type === "graphic")  return {txt:"граф", cls:"b-graph"};
+    if(type === "phonetic") return {txt:"фон",  cls:"b-phone"};
+    if(type === "morph")    return {txt:"морф", cls:"b-morph"};
+    if(type === "syntactic")return {txt:"синт", cls:"b-syn"};
+    return                  {txt:"лекс", cls:"b-lex"};
+  }
+
+  // Очистка (как у одногруппника)
+  function _cleanBaseText_v15(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // надстрочные/титла/комбинируемые
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+    // пунктуация/пробелы
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+    // whitelist
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+    return s.trim();
+  }
+
+  function _levenshtein_v15(a, b){
+    var n = a.length, m = b.length;
+    if(n === 0) return m;
+    if(m === 0) return n;
+
+    var prev = new Uint16Array(m + 1);
+    var curr = new Uint16Array(m + 1);
+    for(var j=0;j<=m;j++) prev[j] = j;
+
+    for(var i=1;i<=n;i++){
+      curr[0] = i;
+      var ai = a.charCodeAt(i - 1);
+      for(var jj=1;jj<=m;jj++){
+        var cost = (ai === b.charCodeAt(jj - 1)) ? 0 : 1;
+        var v1 = prev[jj] + 1;
+        var v2 = curr[jj - 1] + 1;
+        var v3 = prev[jj - 1] + cost;
+        var best = v1 < v2 ? v1 : v2;
+        if(v3 < best) best = v3;
+        curr[jj] = best;
+      }
+      prev.set(curr);
+    }
+    return prev[m];
+  }
+
+  function _similarity_v15(a, b){
+    if(!a && !b) return 1;
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+
+    var d = _levenshtein_v15(a.slice(0,60), b.slice(0,60));
+    var max = Math.max(a.length, b.length);
+    return max === 0 ? 1 : (1 - d / max);
+  }
+
+  // Главное: типы разночтений "как у одногруппника"
+  function getTypes(masterSeg, otherSeg){
+    var bRaw = (otherSeg && (otherSeg.plain || otherSeg.txt)) ? (otherSeg.plain || otherSeg.txt) : "";
+    if(!bRaw) return ["gap"];
+
+    var aRaw = (masterSeg && (masterSeg.plain || masterSeg.txt)) ? (masterSeg.plain || masterSeg.txt) : "";
+
+    var A = _cleanBaseText_v15(aRaw);
+    var B = _cleanBaseText_v15(bRaw);
+
+    // Идентично (после очистки) -> совпало (зелёное), без бейджа
+    if(A && B && A === B) return [];
+
+    // Порядок как у одногруппника: сначала sim, потом lemmaEq
+    var sim = _similarity_v15(A, B);
+
+    var la = _cleanBaseText_v15((masterSeg && (masterSeg.lemma || "")) || "");
+    var lb = _cleanBaseText_v15((otherSeg  && (otherSeg.lemma  || "")) || "");
+    var lemmaEq = la && lb && la === lb;
+
+    if(sim >= 0.72) return ["graphic","phonetic"];
+    if(lemmaEq) return ["morph"];
+    return ["lexical"];
+  }
+
+  // Подсветка: gap -> "---", иначе зелёное для []/graphic/phonetic/morph, красное для lexical
+  function highlightHTML(masterSeg, otherSeg){
+    var bRaw = (otherSeg && (otherSeg.txt || otherSeg.plain)) ? (otherSeg.txt || otherSeg.plain) : "";
+    if(!bRaw){
+      return '<span style="opacity:.55">---</span>';
+    }
+
+    var types = getTypes(masterSeg, otherSeg) || [];
+    var primary = (types && types.length) ? types[0] : "identical";
+    var ok = (primary === "identical" || primary === "graphic" || primary === "phonetic" || primary === "morph");
+    var cls = ok ? "ok" : "bad";
+
+    var text = otherSeg.txt || "";
+    var re = /([A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+|[^A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]+)/g;
+    var out = [], m;
+    while((m = re.exec(text)) !== null){
+      var part = m[0];
+      var isWord = /[A-Za-z\u0400-\u052F\u1C80-\u1C8F\u2DE0-\u2DFF\uA640-\uA69F]/.test(part);
+      var esc = part.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if(!isWord) out.push(esc);
+      else out.push('<span class="tok '+cls+'">'+esc+'</span>');
+    }
+    return out.join("");
+  }
+  // ==========================================
+  // PATCH v16 STRIP MARKS + DOTLESS I
+  // Убираем надстрочные/диакритику для сравнения + фикс ı̈ (U+0131 + диакритика)
+  // ==========================================
+
+  function __cleanBaseTextFinal(s){
+    if(!s) return "";
+    s = String(s).toLowerCase();
+
+    // FIX: dotless i -> обычное i (иначе whitelist выкидывает и сравнение ломается)
+    s = s.replace(/ı/g, "i");
+
+    try{ s = s.normalize("NFD"); }catch(e){}
+
+    // снять диакритику/надстрочные/титла (комбинируемые)
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+
+    // убрать пунктуацию/пробелы/скобки/кавычки
+    s = s.replace(/[-–—.,;:!?«»""„‟‹›(){}\[\]\s]/g, "");
+
+    // whitelist (как у одногруппника)
+    s = s.replace(/[^а-яёa-z0-9ѣѫѧѳѵꙗѯѱѡꙑії]/gi, "");
+
+    return s.trim();
+  }
+
+  // Подменяем все версии clean-функций, которые могли остаться от предыдущих патчей
+  function _cleanBaseText_v11(s){ return __cleanBaseTextFinal(s); }
+  function _cleanBaseText_v12(s){ return __cleanBaseTextFinal(s); }
+  function _cleanBaseText_v13(s){ return __cleanBaseTextFinal(s); }
+  function _cleanBaseText_v15(s){ return __cleanBaseTextFinal(s); }
+
+  // Усиливаем normGraphic (на случай, если где-то ещё используется)
+  function normGraphic(s){
+    s = (s||"").toLowerCase();
+    s = s.replace(/ı/g,"i");
+    try{ s = s.normalize("NFD"); }catch(e){}
+    s = s.replace(/[\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+    return s;
+  }
+  // ==========================================
+  // LEMMA CLEANER PATCH
+  // Убираем точки, титла, знаки препинания из леммы при выводе
+  // ==========================================
+  function cleanLemmaDisplay(s){
+    if(!s) return "";
+    var str = String(s);
+    
+    // Убираем точки, точки с запятой, запятые, двоеточия, титла (·), вопросы/восклицания
+    // А также спецсимволы аббревиатур, которые часто попадают в леммы
+    str = str.replace(/[\.·,;：？！]/g, "");
+    
+    // Убираем пробелы по краям
+    str = str.trim();
+    
+    // Если после очистки пусто — возвращаем пустоту (чтобы не показывать мусор)
+    if(!str) return "";
+    
+    return str;
+  }
 
   // events
   chkHighlight.addEventListener("change", render);
@@ -2515,6 +2734,11 @@ if(typeEnabled && typeEnabled[types[t]] === false) continue;
 </script>
 </body>
 </html>
+
+
+
+
+
 
 
 
